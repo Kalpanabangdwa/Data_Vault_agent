@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: core_banking
+    database: CUSTOM_AGENT
+    schema: RAW_CORE_BANKING
+    tables:
+      - name: CUSTOMERS
+      - name: BRANCHES
+      - name: ACCOUNTS
+      - name: ACCOUNT_HOLDERS
+      - name: TRANSACTIONS
+
+  - name: card_processor
+    database: CUSTOM_AGENT
+    schema: RAW_CARD_PROCESSOR
+    tables:
+      - name: CUSTOMERS
+      - name: CARDS

@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: sat_transaction_details
+    description: Transaction detail satellite for banking transactions.
+    columns:
+      - name: TRANSACTION_HK
+        description: Hash key for the transaction hub.
+        tests:
+          - not_null
+          - unique
+      - name: HASHDIFF_SAT_TRANSACTION
+        description: Hash diff for the transaction detail satellite.
+        tests:
+          - not_null
+      - name: TXN_TYPE
+        description: Type of transaction.
+      - name: AMOUNT
+        description: Transaction amount.
+      - name: TXN_TIMESTAMP
+        description: Transaction timestamp.
+      - name: BALANCE_AFTER
+        description: Account balance after the transaction.
+      - name: LOAD_DTS
+        description: Load timestamp.
+      - name: REC_SRC
+        description: Record source.
