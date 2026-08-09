@@ -2,7 +2,7 @@
 name: dv-pr-generator
 description: >
   Opens a PR for a Data Vault model that has received an APPROVE
-  verdict from dv-code-reviewer. Executes git/gh commands directly.
+  verdict from dv-code-reviewer. Executes git/gh commands directly. 
 tools:
   - 'runCommands'
 ---
@@ -46,3 +46,19 @@ If no approval is shown, refuse and ask the user to get a review first.
 - Never push directly to main.
 - Never retry a failed git/gh command automatically - surface the
   error and stop.
+
+## 📌 Summary
+Resolves **[JIRA_TICKET_ID]**: [Brief 1-line description of the business capability added].
+
+## 🛠️ Changes Introduced
+- **Staging Layer:** Added `[stg_model_name].sql` with 6-layer CTE pattern.
+- **Raw Vault Layer:** Added `[hub/link/sat_model_name].sql` with surrogate key hashing.
+- **Documentation/Config:** Updated schema definitions and sources where applicable.
+
+## 🧪 Testing & Validation
+- [x] Evaluated dbt SQL against workspace standards (`DV_STANDARD.MD`).
+- [x] Code review completed and cleared by `@dv-code-reviewer`.
+- [x] No standard policy violations detected.
+
+## 🔗 Related Resources
+- **Issue/Ticket:** `[JIRA_TICKET_ID]`
