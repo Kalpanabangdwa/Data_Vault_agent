@@ -130,10 +130,16 @@ parent Hub or Link.
 ## Dedup Rule
 Never `SELECT DISTINCT` anywhere in staging or raw vault. Always `QUALIFY ROW_NUMBER()`.
 
-## Source/Ref Rules
-- Staging: only `{{ source(...) }}`, plus `{{ ref() }}` to another staging
-  model when a lookup is genuinely needed (e.g. resolving a shared key).
-- Raw vault and above: only `{{ ref(...) }}`, never `source()`.
+## REF_SOURCE_SYSTEM Governance
+REC_SRC and BKCC are never hardcoded string literals in a staging model.
+Every staging model joins to CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM via
+source('control', 'REF_SOURCE_SYSTEM') to obtain these values.
+
+This table is populated and maintained manually by the data engineering
+team - never by an agent. Agents may only READ from it. If a ticket
+requires a source system not yet present in this table, flag it to the
+user rather than inventing a REC_SRC/BKCC value or attempting to insert
+a row.
 
 ## Links Never Carry Descriptive Payload
 A Link stores only hash keys + metadata. Any descriptive attribute of the
@@ -235,7 +241,7 @@ LOGIC AS (
 ),
 FINAL AS (
     SELECT * FROM LOGIC
-    {% if is_incremental() %}
+    {% if is_incremental() and var('enable_hub_dedup_check', true) %}
     WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
     {% endif %}
     QUALIFY ROW_NUMBER() OVER (PARTITION BY <ENTITY>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1

@@ -32,13 +32,18 @@ it. The ticket may also specify exact model names.
    section. Use these templates exactly - do not invent a different
    structure or fall back to general Data Vault knowledge.
 
-1a. NAMING - user-specified names always win. If the ticket names the
+1a. If the ticket's source system isn't already a row in
+    CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM (check via sql_exec_tool),
+    STOP and tell the user - do not invent a REC_SRC/BKCC value and do
+    not attempt to insert a row yourself.
+
+1b. NAMING - user-specified names always win. If the ticket names the
     staging model, Hub, Link, or Satellite explicitly, use that EXACT
     name verbatim for the file and the dbt model. Only fall back to
     DV_STANDARD.md's default naming pattern (stg_/hub_/lnk_/sat_) when
     the ticket does not specify a name.
 
-1b. HK FORMULA - if the ticket specifies which columns go into the
+1c. HK FORMULA - if the ticket specifies which columns go into the
     hash (e.g. "hash of customer_id, BKCC"), use exactly those
     columns, in exactly that order, with BKCC last if included. This
     overrides DV_STANDARD.md's default Hash Key Formula section when
@@ -95,6 +100,10 @@ If the user pastes a REQUEST CHANGES verdict from dv-code-reviewer:
   ghost-record CTE - no exceptions.
 - Never recompute a hash that staging already computed - always SELECT
   it downstream.
+- Never write REC_SRC or BKCC as a string literal in a staging model -
+  always join to REF_SOURCE_SYSTEM.
+- Never insert, update, or modify rows in REF_SOURCE_SYSTEM under any
+  circumstance.
 - Never include BKCC in a Satellite.
 - Each ghost record row must hash its OWN sentinel value ('0', '-1',
   '-2') - never the same hash repeated across all three rows.

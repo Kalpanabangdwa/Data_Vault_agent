@@ -1,0 +1,22 @@
+# Snowflake credentials - never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# dbt build artifacts - regenerate every run, don't track
+dv_gen_project/target/
+dv_gen_project/logs/
+dv_gen_project/dbt_packages/
+
+# dbt local files
+dv_gen_project/.user.yml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+pr_body_*.md
+
+logs/

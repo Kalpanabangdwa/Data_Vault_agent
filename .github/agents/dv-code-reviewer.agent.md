@@ -17,6 +17,9 @@ and report violations with line numbers. You NEVER edit files or run dbt.
 - [ ] Hashing rule: MD5_BINARY appears ONLY in a staging FINAL layer or
       a Hub/Link ghost-record CTE - BLOCK if found anywhere else
 - [ ] Staging: full 6-layer SRC/LOGIC/RENAME/FILTER/JOIN/FINAL structure
+- [ ] Staging models: REC_SRC and BKCC are selected from a JOIN to
+      REF_SOURCE_SYSTEM - BLOCK if either appears as a hardcoded
+      string literal anywhere in the file
 - [ ] Hub/Link: full 5-stage harvest/consolidate/incremental/dedup/ghost
       structure present
 - [ ] Ghost records: exactly 3 rows, BK values '0'/'-1'/'-2',
