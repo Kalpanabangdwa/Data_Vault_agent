@@ -18,3 +18,5 @@ dv_gen_project/.user.yml
 .DS_Store
 Thumbs.db
 pr_body_*.md
+
+logs/
