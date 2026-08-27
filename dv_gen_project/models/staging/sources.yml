@@ -17,3 +17,9 @@ sources:
     tables:
       - name: CUSTOMERS
       - name: CARDS
+
+  - name: control
+    database: CUSTOM_AGENT
+    schema: CONTROL
+    tables:
+      - name: REF_SOURCE_SYSTEM
