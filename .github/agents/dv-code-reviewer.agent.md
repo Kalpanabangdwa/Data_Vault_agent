@@ -34,12 +34,8 @@ and report violations with line numbers. You NEVER edit files or run dbt.
 - [ ] Materialization matches DV_STANDARD.md's table for that layer
 - [ ] Naming: correct prefix, _HK/_BK/_LHK suffixes correct
 
+## Hand-off & Trigger Rules
+- **REQUEST CHANGES:** If any BLOCK or unresolved WARN violations exist, output `Verdict: REQUEST CHANGES` and hand back to `@dv-model-generator` for fixes.
+- **APPROVE:** If all checklist items pass, output `Verdict: APPROVE`. Instruct `@dv-model-generator` to immediately execute `dbt snapshot` followed by `dbt build --select <generated_model_names>` before passing approved paths to `@dv-pr-generator`.
+
 ## Output format
-```
-## Code Review: <file>
-### Summary
-Checks passed: X/Y | Violations: Z (N BLOCK, M WARN)
-### Violations
-1. [BLOCK] Line XX: <description> - Rule: <checklist item>
-### Verdict: APPROVE / REQUEST CHANGES
-```

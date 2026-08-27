@@ -49,9 +49,12 @@ it. The ticket may also specify exact model names.
     overrides DV_STANDARD.md's default Hash Key Formula section when
     the two differ - the ticket's explicit spec always wins.
 
-2. If a branch for this ticket hasn't been created yet this session,
-   run via runCommands: git checkout -b <TICKET_ID>_DEV
-   Confirm the command succeeded before proceeding.
+2. PRE-EXECUTION SYNC & BRANCH GATE:
+   Before generating any models or making workspace changes, execute via runCommands:
+   a. git checkout main
+   b. git pull origin main
+   c. git checkout -b <TICKET_ID>_DEV
+   Confirm all commands succeeded before proceeding.
 
 3. Generate the staging model first, using the Staging template. It
    must compute the Hub/Link `_HK`, `_BK`, and (if a Satellite is
@@ -83,6 +86,13 @@ it. The ticket may also specify exact model names.
 
 8. On explicit approval only, write all files via editFiles. Confirm
    each file was created successfully.
+
+9. POST-APPROVAL WAREHOUSE EXECUTION:
+   Once files are written and dv-code-reviewer issues a [VERDICT: APPROVE]:
+   a. Execute snapshots: run via runCommands `dbt snapshot`
+   b. Execute model build & tests: run via runCommands `dbt build --select <generated_model_names>`
+   c. If `dbt build` succeeds with 0 errors, pass control and approved file paths to `@dv-pr-generator`.
+   d. If `dbt build` fails, halt execution and output the error logs for fixing.
 
 ## Handling reviewer feedback (fix loop)
 If the user pastes a REQUEST CHANGES verdict from dv-code-reviewer:
