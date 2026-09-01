@@ -1,0 +1,50 @@
+WITH SRC AS (
+    SELECT * FROM {{ source('core_banking', 'BRANCHES') }}
+),
+LOGIC AS (
+    SELECT
+        NULLIF(TRIM(CAST(BRANCH_CODE AS VARCHAR)), '') AS BRANCH_CODE,
+        NULLIF(TRIM(CAST(BRANCH_NAME AS VARCHAR)), '') AS BRANCH_NAME,
+        NULLIF(TRIM(CAST(CITY AS VARCHAR)), '') AS CITY
+    FROM SRC
+),
+RENAME AS (
+    SELECT BRANCH_CODE, BRANCH_NAME, CITY
+    FROM LOGIC
+),
+FILTER AS (
+    SELECT * FROM RENAME
+    WHERE BRANCH_CODE IS NOT NULL
+),
+JOIN_LAYER AS (
+    SELECT
+        f.BRANCH_CODE,
+        f.BRANCH_NAME,
+        f.CITY,
+        rss.REC_SRC,
+        rss.BKCC
+    FROM FILTER f
+    INNER JOIN {{ source('control', 'REF_SOURCE_SYSTEM') }} rss
+        ON UPPER(rss.SOURCE_SYSTEM_CODE) = UPPER('CORE_BANKING')
+    WHERE rss.ACTIVE_FLAG = TRUE
+),
+FINAL AS (
+    SELECT
+        BRANCH_CODE,
+        BRANCH_NAME,
+        CITY,
+        MD5_BINARY(UPPER(CONCAT_WS('||',
+            COALESCE(NULLIF(TRIM(CAST(BRANCH_CODE AS VARCHAR)), ''), '^^'),
+            COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
+        ))) AS BRANCH_HK,
+        BRANCH_CODE AS BRANCH_BK,
+        MD5_BINARY(UPPER(NULLIF(CONCAT_WS('||',
+            IFNULL(TRIM(BRANCH_NAME::VARCHAR), '^^'),
+            IFNULL(TRIM(CITY::VARCHAR), '^^')
+        ), '^^'))) AS HASHDIFF,
+        current_timestamp() AS LOAD_DTS,
+        REC_SRC,
+        BKCC
+    FROM JOIN_LAYER
+)
+SELECT * FROM FINAL

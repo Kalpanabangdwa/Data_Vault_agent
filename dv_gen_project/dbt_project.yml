@@ -1,0 +1,30 @@
+name: 'dv_gen_project'
+version: '1.0.0'
+profile: 'dv_gen_project'
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+clean-targets:         
+  - "target"
+  - "dbt_packages"
+models:
+  dv_gen_project:
+    staging:
+      +schema: STAGING
+      +materialized: view
+    raw_vault:
+      hub:
+        +schema: RAW_VAULT
+        +materialized: incremental
+      link:
+        +schema: RAW_VAULT
+        +materialized: incremental
+      satellite:
+        +schema: RAW_VAULT
+        +materialized: incremental
+    info_marts:
+      +schema: INFO_MART
+      +materialized: view
