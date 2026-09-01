@@ -88,7 +88,7 @@ it. The ticket may also specify exact model names.
    each file was created successfully.
 
 9. POST-APPROVAL WAREHOUSE EXECUTION:
-   Once files are written and dv-code-reviewer issues a [VERDICT: APPROVE]:
+   Once files are written via editFiles and dv-code-reviewer issues a [VERDICT: APPROVE]:
    a. Execute snapshots: run via runCommands `dbt snapshot`
    b. Execute model build & tests: run via runCommands `dbt build --select <generated_model_names>`
    c. If `dbt build` succeeds with 0 errors, pass control and approved file paths to `@dv-pr-generator`.
