@@ -10,6 +10,7 @@ sources:
       - name: ACCOUNTS
       - name: ACCOUNT_HOLDERS
       - name: TRANSACTIONS
+      - name: CREDIT_CARD_APPLICATION
 
   - name: card_processor
     database: CUSTOM_AGENT

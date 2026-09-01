@@ -1,0 +1,14 @@
+{{ config(materialized='incremental', unique_key='CREDIT_CARD_HK') }}
+WITH SRC AS ( SELECT * FROM {{ ref('stg_core_banking_credit_card') }} ),
+LOGIC AS (
+    SELECT CREDIT_CARD_HK, HASHDIFF, CREDIT_LIMIT, CARD_TYPE, CREDIT_SCORE, APPROVAL_STATUS, ANNUAL_FEE, LOAD_DTS, REC_SRC
+    FROM SRC
+),
+FINAL AS (
+    SELECT * FROM LOGIC
+    {% if is_incremental() %}
+    WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
+    {% endif %}
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY CREDIT_CARD_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
+)
+SELECT * FROM FINAL
