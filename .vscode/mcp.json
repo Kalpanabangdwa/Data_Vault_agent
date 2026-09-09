@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "snowflake-mcp": {
+      "command": "uv",
+      "args": [
+        "run",
+        "./cortex_agent.py"
+      ]
+    }
+  }
+}
