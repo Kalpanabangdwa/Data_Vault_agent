@@ -10,60 +10,44 @@ import sys
 import os
 import re
 import subprocess
+_snowflake_conn = None
 from dotenv import load_dotenv
 from snowflake.connector import connect
 
 load_dotenv()
 
-def run_git_pr(branch_name: str, pr_title: str, pr_body: str) -> str:
-    """Creates a git branch, stages files, commits, pushes, and creates a GitHub PR using gh CLI."""
-    try:
-        # 1. Create and switch to branch
-        subprocess.run(["git", "checkout", "-b", branch_name], check=True, capture_output=True, text=True)
-        
-        # 2. Stage all changed files
-        subprocess.run(["git", "add", "-A"], check=True, capture_output=True, text=True)
-        
-        # 3. Commit changes
-        subprocess.run(["git", "commit", "-m", pr_title], check=True, capture_output=True, text=True)
-        
-        # 4. Push branch to remote
-        subprocess.run(["git", "push", "-u", "origin", branch_name], check=True, capture_output=True, text=True)
-        
-        # 5. Create PR via GitHub CLI
-        result = subprocess.run(
-            ["gh", "pr", "create", "--title", pr_title, "--body", pr_body],
-            capture_output=True, text=True, check=True
-        )
-        
-        return f"PR Successfully Created! URL: {result.stdout.strip()}"
-    except subprocess.CalledProcessError as e:
-        err_msg = e.stderr.strip() if e.stderr else str(e)
-        return f"Git/PR Execution Error: {err_msg}"
 
-def run_sql_query(query: str) -> str:
-    """Executes a SQL query against Snowflake."""
-    ctx = connect(
-        account=os.environ["SNOWFLAKE_ACCOUNT"],
-        user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ["SNOWFLAKE_PASSWORD"],
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
-        database=os.environ.get("SNOWFLAKE_DATABASE", "CUSTOM_AGENT"),
-        schema=os.environ.get("SNOWFLAKE_SCHEMA", "STAGING")
-    )
-    cursor = ctx.cursor()
-    cursor.execute(query)
-    
-    if cursor.description:
-        columns = [col[0] for col in cursor.description]
-        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        res = json.dumps(rows, default=str)
-    else:
-        res = json.dumps({"status": "Success", "rows_affected": cursor.rowcount})
-        
-    cursor.close()
-    ctx.close()
-    return res
+def run_sql_query(query):
+    global _snowflake_conn
+
+    try:
+        if _snowflake_conn is None or _snowflake_conn.is_closed():
+            _snowflake_conn = connect(
+                account=os.environ["SNOWFLAKE_ACCOUNT"],
+                user=os.environ["SNOWFLAKE_USER"],
+                password=os.environ["SNOWFLAKE_PASSWORD"],
+                warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
+                database=os.environ.get("SNOWFLAKE_DATABASE", "CUSTOM_AGENT"),
+                schema=os.environ.get("SNOWFLAKE_SCHEMA", "STAGING")
+            )
+
+        cursor = _snowflake_conn.cursor()
+
+        try:
+            cursor.execute(query)
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
+    except Exception:
+        if _snowflake_conn is not None:
+            try:
+                _snowflake_conn.close()
+            except Exception:
+                pass
+
+        _snowflake_conn = None
+        raise
 
 def validate_model(sql: str, model_type: str) -> str:
     """Performs deterministic template/rule checks for Data Vault model SQL."""
@@ -173,19 +157,6 @@ def handle_input():
                                 }
                             },
                             {
-                                "name": "execute_git_pr",
-                                "description": "Creates a git branch, stages files, commits, pushes, and creates a GitHub PR.",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "branch_name": {"type": "string", "description": "Name for the new git feature branch (e.g., add-transaction-models)."},
-                                        "pr_title": {"type": "string", "description": "Title for the PR / Commit message."},
-                                        "pr_body": {"type": "string", "description": "Detailed PR body description detailing models and review verdict."}
-                                    },
-                                    "required": ["branch_name", "pr_title", "pr_body"]
-                                }
-                            },
-                            {
                                 "name": "validate_model_tool",
                                 "description": "Deterministically check generated Data Vault dbt model SQL against DV_STANDARD.md rules (hashing location, ghost records, dedup pattern, source/ref usage). Returns pass/fail and a list of violations.",
                                 "inputSchema": {
@@ -221,12 +192,6 @@ def handle_input():
                     output_text = validate_model(
                         sql=arguments.get("sql", ""),
                         model_type=arguments.get("model_type", "")
-                    )
-                elif tool_name == "execute_git_pr":
-                    output_text = run_git_pr(
-                        branch_name=arguments.get("branch_name"),
-                        pr_title=arguments.get("pr_title"),
-                        pr_body=arguments.get("pr_body")
                     )
                 else:
                     output_text = f"Error: Unknown tool name '{tool_name}'"

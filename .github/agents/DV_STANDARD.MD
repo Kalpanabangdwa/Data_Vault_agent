@@ -56,6 +56,60 @@ MD5_BINARY(UPPER(CONCAT_WS('||',
 
 ```
 
+### Staging Template
+(Use this exact multi-stream syntax structure, adjusting column names and joins based on the ticket)
+WITH 
+SRC_S AS ( SELECT * FROM {{ source('<schema>', '<DRIVER_TABLE>') }} ),
+SRC_A AS ( SELECT * FROM {{ source('control', 'REF_SOURCE_SYSTEM') }} ),
+
+LOGIC_S AS (
+    SELECT 
+        NULLIF(TRIM(CAST(<driver_bk_col> AS VARCHAR)), '') AS <ENTITY>_BK,
+        <other_columns>,
+        CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ AS LOAD_DTS
+    FROM SRC_S
+),
+LOGIC_A AS ( SELECT * FROM SRC_A ),
+
+RENAME_S AS (
+    SELECT <ENTITY>_BK, <other_columns>, LOAD_DTS FROM LOGIC_S
+),
+RENAME_A AS (
+    SELECT TABLE_NAME, REC_SRC, BKCC FROM LOGIC_A
+),
+
+FILTER_S AS (
+    SELECT * FROM RENAME_S WHERE <ENTITY>_BK IS NOT NULL
+),
+FILTER_A AS (
+    SELECT * FROM RENAME_A WHERE TABLE_NAME = '<DRIVER_TABLE>'
+),
+
+JOIN_RESULT AS (
+    SELECT 
+        s.*, 
+        a.REC_SRC, 
+        a.BKCC
+    FROM FILTER_S s
+    INNER JOIN FILTER_A a ON '1' = '1'
+    -- LEFT JOIN FILTER_S2 s2 ON s.<key> = s2.<key> (If secondary lookups exist)
+),
+
+FINAL AS (
+    SELECT 
+        *,
+        MD5_BINARY(UPPER(CONCAT_WS('||',
+            COALESCE(NULLIF(TRIM(CAST(<ENTITY>_BK AS VARCHAR)), ''), '^^'),
+            COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
+        ))) AS <ENTITY>_HK,
+        MD5_BINARY(UPPER(NULLIF(CONCAT(
+            IFNULL(TRIM(<payload_col_1>::text), '^^'), '||',
+            IFNULL(TRIM(<payload_col_2>::text), '^^')
+        ), '^^||^^'))) AS HASHDIFF
+    FROM JOIN_RESULT
+)
+SELECT * FROM FINAL
+
 **With BKCC (used when a ticket's Hub config specifies it - BKCC is always the LAST component when included):**
 
 ```sql
