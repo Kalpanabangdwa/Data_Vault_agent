@@ -34,18 +34,147 @@ MD5_BINARY on real business data - they only SELECT pre-computed hash columns.
 synthetic system rows with no source data to stage - see below).
 
 ## Staging Model Architecture (Multi-Stream)
-All staging models must process data in independent, parallel streams before consolidating. Every CTE must be suffixed with its stream identifier:
-*   **Stream `_S`:** The primary driver table.
-*   **Stream `_A`:** The Business Key Collision reference table (`ref_business_key_collision`).
-*   **Stream `_S2`, `_S3`, etc.:** Any secondary lookup tables required by the ticket.
+
+All staging models must process data in independent, parallel streams before
+consolidating. Every CTE must be suffixed with its stream identifier:
+
+* **Stream `_S`:** The primary driver table.
+* **Stream `_A`:** The authoritative Business Key Collision/control metadata
+  required for the current ticket.
+* **Stream `_S2`, `_S3`, etc.:** Any secondary lookup tables required by the
+  ticket.
+
+The `_A` stream MUST NOT assume a fixed control table name. The generator
+must resolve the authoritative metadata source from the current project
+configuration and live Snowflake metadata.
 
 **The 6 Mandatory Layers (Always in this order)**
-1. **SRC Layer:** Extract raw data. Use `{{ source(...) }}` for data tables and `{{ ref(...) }}` for the `_A` reference table. If a secondary table (`_S2`) requires deduplication, apply `QUALIFY 1 = ROW_NUMBER() OVER (...)` directly in this layer.
-2. **LOGIC Layer:** Isolate stream-specific transformations. Alias the raw grain columns to their Business Key names (e.g., `<raw_col> AS ITEM_BK`). Derive the `LOAD_DTS` column here using exact timezone conversions (e.g., `CONVERT_TIMEZONE('UTC', ...)`).
-3. **RENAME Layer:** Select columns from the LOGIC layer, mapping them to standardized enterprise names. Maintain separate CTEs for each stream (`RENAME_S`, `RENAME_A`, etc.).
-4. **FILTER Layer:** Drop invalid or null grain rows. For the `FILTER_A` stream, you MUST apply a hardcoded `WHERE rec_src = '<EXACT_SOURCE_STRING>'` filter.
-5. **JOIN Layer:** Consolidate the streams into a single `JOIN_RESULT` CTE. `INNER JOIN` the `_A` stream using `ON '1' = '1'`. `LEFT JOIN` any `_S2` lookup streams using their respective keys.
-6. **FINAL Layer:** Select all consolidated columns. Compute all `_HK` and `HASHDIFF` values exactly once in this layer using `MD5_BINARY`. 
+
+1. **SRC Layer:** Extract raw data. Use `{{ source(...) }}` for verified
+   physical source data tables and `{{ ref(...) }}` for the `_A` reference
+   table when the current project defines the authoritative reference as a
+   dbt model. If a secondary table (`_S2`) requires deduplication, apply
+   `QUALIFY 1 = ROW_NUMBER() OVER (...)` directly in this layer.
+
+2. **LOGIC Layer:** Isolate stream-specific transformations. Alias the raw
+   grain columns to their Business Key names (e.g., `<raw_col> AS ITEM_BK`).
+   Derive the `LOAD_DTS` column here using exact timezone conversions
+   (e.g., `CONVERT_TIMEZONE('UTC', ...)`).
+
+3. **RENAME Layer:** Select columns from the LOGIC layer, mapping them to
+   standardized enterprise names. Maintain separate CTEs for each stream
+   (`RENAME_S`, `RENAME_A`, etc.).
+
+4. **FILTER Layer:** Drop invalid or null grain rows.
+
+   For the `_A` stream, filter using the `REC_SRC` value resolved for the
+   current workflow.
+
+   - If `REC_SRC` is explicitly provided in the current ticket/request, use
+     that exact value.
+   - If `REC_SRC` is not provided, resolve it from the authoritative
+     Business Key Collision/control metadata.
+   - Never hardcode or reuse a `REC_SRC` value from a previous model, ticket,
+     or remembered source-system mapping.
+   - If `REC_SRC` cannot be resolved unambiguously, STOP and report the
+     missing or ambiguous metadata.
+
+5. **JOIN Layer:** Consolidate the streams into a single `JOIN_RESULT` CTE.
+   `INNER JOIN` the `_A` stream using `ON '1' = '1'`. `LEFT JOIN` any `_S2`
+   lookup streams using their respective keys.
+
+6. **FINAL Layer:** Select all consolidated columns. Compute all `_HK` and
+   `HASHDIFF` values exactly once in this layer using `MD5_BINARY`.
+
+## REC_SRC and BKCC Governance
+
+`REC_SRC` and `BKCC` are controlled metadata values.
+
+The resolution priority is:
+
+1. Explicit values provided in the current ticket/request.
+2. If not provided, authoritative values resolved from the current
+   Snowflake Business Key Collision/control metadata.
+3. If the values cannot be resolved unambiguously, STOP.
+
+Explicit ticket/request values always take priority over metadata-derived
+values.
+
+## dbt Source Registration Governance
+
+All physical source tables used by staging models MUST be registered in
+the current `models/staging/sources.yml`.
+
+The dbt `source()` name MUST come from the current source registration.
+
+The generator MUST:
+
+1. Verify the physical source table exists in Snowflake.
+2. Resolve its database, schema, and table from live Snowflake metadata.
+3. Locate the matching registration in `models/staging/sources.yml`.
+4. Use the exact registered source name in `{{ source(...) }}`.
+
+The generator MUST NOT:
+
+- assume a dbt source name;
+- derive a dbt source name from REC_SRC or BKCC;
+- reuse source aliases from previous models or tickets;
+- use historical aliases that are not present in the current
+  `sources.yml`;
+- use `core_banking` unless it is explicitly registered in the current
+  `sources.yml`.
+
+If the physical table exists in Snowflake but has no matching registration
+in `sources.yml`, STOP and report that the source table requires dbt source
+registration.
+
+Do not generate a staging model using an unregistered or guessed
+`source()` alias.
+
+### REC_SRC
+
+- If `REC_SRC` is explicitly provided in the current ticket/request, the
+  generator MUST use that exact value.
+- If `REC_SRC` is not provided, the generator MUST resolve it from the
+  authoritative current control/Business Key Collision metadata.
+- The resolved `REC_SRC` value MUST be used consistently in the `_A` stream
+  filter and downstream join logic.
+- The generator MUST NOT derive `REC_SRC` from `BKCC` unless the current
+  request explicitly defines that relationship.
+
+### BKCC
+
+- If `BKCC` is explicitly provided in the current ticket/request, the
+  generator MUST use that exact value.
+- If `BKCC` is not provided, the generator MUST resolve it from the
+  authoritative current control/Business Key Collision metadata.
+- The generator MUST NOT assume a default such as `SAP_ECC`.
+- The generator MUST NOT reuse a BKCC value from a previous model or ticket.
+
+### Missing or Ambiguous Metadata
+
+If the required source/control metadata cannot be resolved:
+
+- STOP the workflow.
+- Explicitly acknowledge what could not be resolved.
+- Report the physical table or metadata source that was searched.
+- Do not generate SQL using guessed or placeholder values.
+- Do not substitute another control table.
+
+If multiple REC_SRC or BKCC values are possible and the correct value cannot
+be determined unambiguously, STOP and report the ambiguity.
+
+### Source Table Validation
+
+Before generating the staging model, the generator MUST verify that the
+physical driver table exists in Snowflake.
+
+If the requested driver table does not exist:
+
+- STOP the workflow.
+- Explicitly acknowledge that the requested source table was not found.
+- Report the exact table name that was searched.
+- Do not generate a staging model using an assumed or placeholder source. 
 
 ## Hash Key Formula
 **Default (no BKCC):**
@@ -194,10 +323,31 @@ Never `SELECT DISTINCT` anywhere in staging or raw vault. Always `QUALIFY ROW_NU
 
 ## Business Key Collision Governance
 
-`REC_SRC` and `BKCC` values are fetched dynamically by joining to `{{ ref('ref_business_key_collision') }}` in the `_A` stream.
-The staging model must filter this reference table in the FILTER layer using a hardcoded source string (e.g., `WHERE rec_src = '<EXACT_SOURCE_STRING>'`) and perform an `INNER JOIN ... ON '1'='1'` in the JOIN layer.
+For the `FILTER_A` stream, filter using the REC_SRC value resolved for the
+current source table.
 
-This table is populated and maintained manually by the data engineering team - never by an agent. Agents may only READ from it. If a ticket requires a source system not yet present in this table, flag it to the user rather than inventing a REC_SRC/BKCC value or attempting to insert a row.
+The value MUST come from either the explicit ticket/request or the
+authoritative control/reference metadata.
+
+Do not use a hardcoded REC_SRC value from a previous model or ticket.
+
+The generator MUST use the current project configuration and authoritative
+Snowflake metadata to determine the correct source.
+
+The generator MUST NOT assume that the authoritative metadata is always
+provided by a specific table or dbt model name.
+
+If the current project explicitly defines a dbt reference model for the
+Business Key Collision metadata, use that `{{ ref(...) }}` model.
+
+If the metadata is exposed through a configured dbt source, use the exact
+`{{ source(...) }}` alias defined by the current project configuration.
+
+If the required metadata source does not exist or the required REC_SRC/BKCC
+values cannot be resolved unambiguously, STOP and explicitly report the
+problem.
+
+Never invent, hardcode, or reuse REC_SRC/BKCC values from previous models.
 
 ## Links Never Carry Descriptive Payload
 
