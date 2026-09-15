@@ -2,7 +2,6 @@
 name: Data_Vault_Pipeline_Coordinator
 description: Coordinates Data Vault model generation, review, dbt validation, and PR creation.
 tools:
-  - 'runSubagent'
   - 'execute/runInTerminal'
   - 'execute/getTerminalOutput'
 ---

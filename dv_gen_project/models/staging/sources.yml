@@ -1,7 +1,7 @@
 version: 2
 
 sources:
-  - name: core_banking
+  - name: Raw_core_banking
     database: CUSTOM_AGENT
     schema: RAW_CORE_BANKING
     tables:
@@ -11,7 +11,7 @@ sources:
       - name: CUSTOMERS
       - name: TRANSACTIONS
 
-  - name: card_processor
+  - name: Raw_card_processor
     database: CUSTOM_AGENT
     schema: RAW_CARD_PROCESSOR
     tables:

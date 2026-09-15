@@ -30,6 +30,7 @@ components (including whether BKCC is part of it), BK column, grain
 columns, and - if a Satellite is requested - which columns belong in
 it. The ticket may also specify exact model names.
 
+
 The Coordinator may invoke you in one of two modes:
 
 1. PROPOSAL MODE:
@@ -57,19 +58,25 @@ The Coordinator may invoke you in one of two modes:
    or fall back to general Data Vault knowledge.
 
 1a. SOURCE METADATA LOOKUP - Use sql_exec_tool to retrieve the
-REC_SRC and BKCC for the exact source table specified in the ticket.
+REC_SRC and BKCC for the exact physical source table specified in the
+ticket.
 
 The authoritative REC_SRC/BKCC mapping is maintained in:
 
 CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM
 
-Filter specifically to the requested TABLE_NAME.
+Resolve the physical source table's database, schema, and table name
+before performing the REF_SOURCE_SYSTEM lookup.
+
+Filter the control table using both TABLE_SCHEMA and TABLE_NAME so that
+tables with the same name in different source schemas are not ambiguous.
 
 For example:
 
-SELECT TABLE_NAME, REC_SRC, BKCC
+SELECT TABLE_SCHEMA, TABLE_NAME, REC_SRC, BKCC
 FROM CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM
-WHERE TABLE_NAME = '<DRIVER_TABLE>';
+WHERE TABLE_SCHEMA = '<PHYSICAL_SCHEMA>'
+  AND TABLE_NAME = '<DRIVER_TABLE>';
 
 If the ticket explicitly provides REC_SRC and/or BKCC, the explicitly
 provided value takes priority for that field.
@@ -91,6 +98,16 @@ If no matching row exists for the requested TABLE_NAME:
 - Do not invent, assume, or reuse REC_SRC/BKCC values.
 - Do not insert, update, or modify REF_SOURCE_SYSTEM.
 
+If more than one matching row exists for the same TABLE_SCHEMA and
+TABLE_NAME:
+
+- STOP the workflow.
+- Report that the REC_SRC/BKCC metadata is ambiguous.
+- Report the exact TABLE_SCHEMA and TABLE_NAME searched.
+- Do not choose one row arbitrarily.
+- Do not invent, assume, or reuse REC_SRC/BKCC values.
+- Do not insert, update, or modify REF_SOURCE_SYSTEM.
+
 1b. SOURCE REGISTRATION RESOLUTION - Resolve the dbt source() name from
 the current project file:
 
@@ -108,13 +125,14 @@ current sources.yml.
 Use the exact registered source name from sources.yml in the generated
 staging model.
 
+
 Examples:
 
 - CUSTOM_AGENT.RAW_CORE_BANKING.ACCOUNTS
-  -> source('core_banking', 'ACCOUNTS')
+  -> source('Raw_core_banking', 'ACCOUNTS')
 
 - CUSTOM_AGENT.RAW_CARD_PROCESSOR.CARDS
-  -> source('card_processor', 'CARDS')
+  -> source('Raw_card_processor', 'CARDS')
 
 The Generator MUST NOT determine the source() name from REC_SRC, BKCC,
 previous models, previous tickets, git history, or agent memory.
@@ -278,11 +296,12 @@ the two differ - the ticket's explicit spec always wins.
 
    Present the files in this order:
 
-   1. Staging SQL
-   2. Hub/Link SQL
-   3. Satellite SQL
-   4. Satellite YAML
-   5. Any modified source configuration file
+  1. Staging SQL
+  2. Staging YAML
+  3. Hub/Link SQL
+  4. Satellite SQL
+  5. Satellite YAML
+  6. Any modified source configuration file
 
    Do not create or modify any files at this stage.
 
@@ -324,18 +343,26 @@ the two differ - the ticket's explicit spec always wins.
    e. If the approval package is incomplete or inconsistent, STOP and
       return the inconsistency to the Coordinator.
 
-   f. After the approval package is confirmed, execute via runCommands:
+   f. After the approval package is confirmed, use execute/runInTerminal to
+   prepare the ticket branch for file creation.
 
-      git checkout main
+   For the FIRST approved execution for a ticket:
 
-      git pull origin main
+    git checkout main
+    git pull origin main
+    git checkout -b <TICKET_ID>_DEV
 
-      git checkout -b <TICKET_ID>_DEV
+   For a CORRECTED approved proposal after reviewer feedback:
 
-   g. Confirm all branch commands succeeded before using editFiles.
+    Do NOT checkout main.
+    Do NOT create a new branch.
+    Verify that the current branch is <TICKET_ID>_DEV and continue using
+    that existing ticket branch.
 
-   h. Use editFiles to create exactly the approved files at exactly
-      the approved paths.
+   g. Confirm the required branch state is correct before using edit.
+
+   h. Use edit to create or update exactly the approved files at exactly the
+   approved paths.
 
    i. Confirm that each approved file was created successfully.
 

@@ -1,5 +1,38 @@
 # DV_Gen Fintech Data Vault Standard 
 
+## Rule Precedence
+
+The following precedence applies throughout the Data Vault generation
+workflow:
+
+1. Explicit requirements provided in the current user request or ticket
+   take priority over default rules in this standard.
+2. When the ticket does not explicitly specify a behavior, the rules
+   defined in this standard must be followed.
+3. Agents must not invent or silently change requirements that are not
+   specified by either the ticket or this standard.
+
+This precedence applies consistently to all agents, including the
+Coordinator, Model Generator, Code Reviewer, and PR Generator.
+
+Examples of explicit ticket requirements include, but are not limited to:
+
+- Hash Key formulas
+- Business Key definitions
+- Grain definitions
+- Model names
+- REC_SRC
+- BKCC
+- Requested Satellite columns
+- Other explicitly specified model configuration
+
+When an explicit ticket requirement differs from a default rule in this
+standard, the ticket requirement takes priority.
+
+Agents must preserve and apply the explicit ticket requirement
+consistently throughout the workflow.
+
+
 ## Naming Conventions
 **User-specified names always take priority.** If a ticket or prompt
 explicitly names a staging model, Hub, Link, or Satellite (e.g.
@@ -35,18 +68,40 @@ synthetic system rows with no source data to stage - see below).
 
 ## Staging Model Architecture (Multi-Stream)
 
-All staging models must process data in independent, parallel streams before
-consolidating. Every CTE must be suffixed with its stream identifier:
+Staging models prepare the requested raw source data for the Data Vault
+layers.
 
-* **Stream `_S`:** The primary driver table.
-* **Stream `_A`:** The authoritative Business Key Collision/control metadata
-  required for the current ticket.
-* **Stream `_S2`, `_S3`, etc.:** Any secondary lookup tables required by the
-  ticket.
+The staging model must process the required input streams separately
+before consolidating them.
 
-The `_A` stream MUST NOT assume a fixed control table name. The generator
-must resolve the authoritative metadata source from the current project
-configuration and live Snowflake metadata.
+Every CTE must use the appropriate stream suffix:
+
+- **Stream `_S`**: The primary business-data stream. It reads the
+  requested physical raw table using the exact `source()` registration
+  resolved from the current project's `sources.yml`.
+
+- **Stream `_A`**: The authoritative metadata stream used to provide
+  source-control metadata such as `REC_SRC` and `BKCC`. In the current
+  project this is `{{ source('control', 'REF_SOURCE_SYSTEM') }}`.
+
+- **Streams `_S2`, `_S3`, etc.**: Optional secondary business-data or
+  lookup streams required by the current ticket and source structure.
+
+The generator must determine which streams are required from the current
+ticket, authoritative metadata, and live Snowflake metadata.
+
+The generator must not copy source names, columns, joins, or business
+logic from reference models. Reference models are used only to follow
+the defined structural and calculation patterns.
+
+The `_A` stream must not be treated as business source data. It provides
+authoritative metadata required to enrich or validate the primary source
+stream.
+
+The `_A` stream must use the exact configured source or dbt reference
+resolved for the current project. The generator must not assume that
+`REF_SOURCE_SYSTEM` is universally the control table name for every
+project.
 
 **The 6 Mandatory Layers (Always in this order)**
 
@@ -88,17 +143,37 @@ configuration and live Snowflake metadata.
 
 ## REC_SRC and BKCC Governance
 
-`REC_SRC` and `BKCC` are controlled metadata values.
+`REC_SRC` and `BKCC` are Data Vault source metadata values.
+
+For this POC, the source metadata convention is:
+
+- `RAW_CORE_BANKING` uses `BKCC = SAP_ECC`.
+- `RAW_CARD_PROCESSOR` uses `BKCC = CARD_PROCESSOR`.
+- `REC_SRC` is constructed as `<BKCC>_<TABLE_NAME>`.
+
+Examples:
+
+- `RAW_CORE_BANKING.BRANCHES` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_BRANCHES`
+- `RAW_CORE_BANKING.CUSTOMERS` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_CUSTOMERS`
+- `RAW_CARD_PROCESSOR.CARDS` → `BKCC = CARD_PROCESSOR`, `REC_SRC = CARD_PROCESSOR_CARDS`
+- `RAW_CARD_PROCESSOR.CUSTOMERS` → `BKCC = CARD_PROCESSOR`, `REC_SRC = CARD_PROCESSOR_CUSTOMERS`
 
 The resolution priority is:
 
-1. Explicit values provided in the current ticket/request.
-2. If not provided, authoritative values resolved from the current
-   Snowflake Business Key Collision/control metadata.
-3. If the values cannot be resolved unambiguously, STOP.
+1. Explicit `REC_SRC` or `BKCC` values provided in the current
+   ticket/request take priority.
+2. If not explicitly provided, resolve the values from the current
+   `REF_SOURCE_SYSTEM` metadata.
+3. The metadata lookup must use both `TABLE_SCHEMA` and `TABLE_NAME`
+   to uniquely identify the source table.
+4. If the required values cannot be resolved unambiguously, STOP.
 
-Explicit ticket/request values always take priority over metadata-derived
-values.
+The generator must not derive `REC_SRC` or `BKCC` from the dbt
+`source()` name, model name, or Snowflake schema name when authoritative
+values are available in `REF_SOURCE_SYSTEM`.
+
+Explicit ticket/request values always take priority over
+metadata-derived values.
 
 ## dbt Source Registration Governance
 
@@ -109,27 +184,31 @@ The dbt `source()` name MUST come from the current source registration.
 
 The generator MUST:
 
-1. Verify the physical source table exists in Snowflake.
-2. Resolve its database, schema, and table from live Snowflake metadata.
+1. Verify that the physical source table exists in Snowflake.
+2. Resolve its actual database, schema, and table from live Snowflake metadata.
 3. Locate the matching registration in `models/staging/sources.yml`.
-4. Use the exact registered source name in `{{ source(...) }}`.
+4. Use the exact registered dbt source name in `{{ source(...) }}`.
 
 The generator MUST NOT:
 
 - assume a dbt source name;
-- derive a dbt source name from REC_SRC or BKCC;
+- derive a dbt source name from `REC_SRC` or `BKCC`;
 - reuse source aliases from previous models or tickets;
-- use historical aliases that are not present in the current
-  `sources.yml`;
-- use `core_banking` unless it is explicitly registered in the current
-  `sources.yml`.
+- use historical aliases that are not present in the current `sources.yml`;
+- rename a source alias simply to match a default naming convention.
 
-If the physical table exists in Snowflake but has no matching registration
-in `sources.yml`, STOP and report that the source table requires dbt source
-registration.
+For the current project, the registered source mappings are:
 
-Do not generate a staging model using an unregistered or guessed
-`source()` alias.
+- `Raw_core_banking` → `CUSTOM_AGENT.RAW_CORE_BANKING`
+- `Raw_card_processor` → `CUSTOM_AGENT.RAW_CARD_PROCESSOR`
+- `control` → `CUSTOM_AGENT.CONTROL`
+
+Examples:
+
+```sql
+{{ source('Raw_core_banking', 'ACCOUNTS') }}
+{{ source('Raw_card_processor', 'CARDS') }}
+{{ source('control', 'REF_SOURCE_SYSTEM') }}
 
 ### REC_SRC
 
