@@ -1,9 +1,7 @@
 ---
 name: Data_Vault_Pipeline_Coordinator
 description: Coordinates Data Vault model generation, review, dbt validation, and PR creation.
-tools:
-  - 'execute/runInTerminal'
-  - 'execute/getTerminalOutput'
+tools: ['execute/getTerminalOutput', 'execute/runInTerminal', 'agent']
 ---
 
 You are the Data_Vault_Pipeline_Coordinator.
