@@ -1,0 +1,15 @@
+version: 2
+models:
+  - name: sat_branch_details
+    description: Satellite storing descriptive attributes (BRANCH_NAME, CITY) for the BRANCH entity, sourced from RAW_CORE_BANKING.BRANCHES.
+    columns:
+      - name: BRANCH_HK
+        data_tests:
+          - dbt_constraints.foreign_key:
+              pk_table_name: ref('hub_branch')
+              pk_column_name: BRANCH_HK
+    data_tests:
+      - dbt_constraints.primary_key:
+          column_names:
+            - BRANCH_HK
+            - LOAD_DTS
