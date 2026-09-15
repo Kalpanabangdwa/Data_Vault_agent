@@ -15,6 +15,10 @@ and report violations with line numbers. You NEVER edit files or run dbt.
 
 ## Checklist
 - [ ] Hashing rule: MD5_BINARY appears ONLY in a staging FINAL layer or
+Ghost-record hashing is a special exception to the normal Hub/Link
+Hash Key formula. For ghost records, follow the exact literal sentinel
+formulas defined in DV_STANDARD.MD. Do not require BKCC or CONCAT_WS
+hashing for ghost records.
       a Hub/Link ghost-record CTE - BLOCK if found anywhere else
 - [ ] Staging: full 6-layer SRC/LOGIC/RENAME/FILTER/JOIN/FINAL structure
 - [ ] Staging models: REC_SRC and BKCC are selected from a JOIN to
@@ -23,7 +27,10 @@ and report violations with line numbers. You NEVER edit files or run dbt.
 - [ ] Hub/Link: full 5-stage harvest/consolidate/incremental/dedup/ghost
       structure present
 - [ ] Ghost records: exactly 3 rows, BK values '0'/'-1'/'-2',
-      LOAD_DTS = 1900-01-01, wrapped in NOT is_incremental()
+      LOAD_DTS = 1900-01-01, wrapped in NOT is_incremental(),
+      and ghost HKs must use the exact literal sentinel formulas
+      MD5_BINARY(UPPER('0')), MD5_BINARY(UPPER('-1')),
+      and MD5_BINARY(UPPER('-2')) respectively.
 - [ ] Dedup: QUALIFY ROW_NUMBER() used, never SELECT DISTINCT
 - [ ] Satellite: HASHDIFF selected from staging (not recomputed),
       is_incremental() filter present, matching .yml exists with

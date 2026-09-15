@@ -1,0 +1,15 @@
+version: 2
+models:
+  - name: sat_customer_details
+    description: Satellite for Customer descriptive details (FULL_NAME, DOB, EMAIL, PHONE)
+    columns:
+      - name: CUSTOMER_HK
+        data_tests:
+          - dbt_constraints.foreign_key:
+              pk_table_name: ref('hub_customer')
+              pk_column_name: CUSTOMER_HK
+    data_tests:
+      - dbt_constraints.primary_key:
+          column_names:
+            - CUSTOMER_HK
+            - LOAD_DTS

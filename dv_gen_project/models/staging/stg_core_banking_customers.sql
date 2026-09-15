@@ -1,0 +1,54 @@
+WITH SRC_S AS ( SELECT * FROM {{ source('Raw_core_banking', 'CUSTOMERS') }} ),
+SRC_A AS ( SELECT * FROM {{ source('control', 'REF_SOURCE_SYSTEM') }} ),
+
+LOGIC_S AS (
+    SELECT 
+        NULLIF(TRIM(CAST(CUST_ID AS VARCHAR)), '') AS CUSTOMER_BK,
+        FULL_NAME,
+        DOB,
+        EMAIL,
+        PHONE,
+        CREATED_DATE,
+        CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ AS LOAD_DTS
+    FROM SRC_S
+),
+LOGIC_A AS ( SELECT * FROM SRC_A ),
+
+RENAME_S AS (
+    SELECT CUSTOMER_BK, FULL_NAME, DOB, EMAIL, PHONE, CREATED_DATE, LOAD_DTS FROM LOGIC_S
+),
+RENAME_A AS (
+    SELECT TABLE_SCHEMA, TABLE_NAME, REC_SRC, BKCC FROM LOGIC_A
+),
+
+FILTER_S AS (
+    SELECT * FROM RENAME_S WHERE CUSTOMER_BK IS NOT NULL
+),
+FILTER_A AS (
+    SELECT * FROM RENAME_A WHERE TABLE_SCHEMA = 'RAW_CORE_BANKING' AND TABLE_NAME = 'CUSTOMERS'
+),
+
+JOIN_RESULT AS (
+    SELECT 
+        s.*, 
+        a.REC_SRC, 
+        a.BKCC
+    FROM FILTER_S s
+    INNER JOIN FILTER_A a ON '1' = '1'
+),
+
+FINAL AS (
+    SELECT 
+        *,
+        MD5_BINARY(UPPER(CONCAT_WS('||',
+            COALESCE(NULLIF(TRIM(CAST(CUSTOMER_BK AS VARCHAR)), ''), '^^')
+        ))) AS CUSTOMER_HK,
+        MD5_BINARY(UPPER(NULLIF(CONCAT(
+              IFNULL(TRIM(FULL_NAME::text), '^^')
+            , '||', IFNULL(TRIM(DOB::text), '^^')
+            , '||', IFNULL(TRIM(EMAIL::text), '^^')
+            , '||', IFNULL(TRIM(PHONE::text), '^^')
+        ), '^^||^^||^^||^^'))) AS HASHDIFF
+    FROM JOIN_RESULT
+)
+SELECT * FROM FINAL
