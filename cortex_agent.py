@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from snowflake.connector import connect
 
 
-load_dotenv()
+load_dotenv(override=True)
 
 _snowflake_conn = None
 
@@ -702,6 +702,23 @@ def handle_input():
                                     ]
                                 }
                             },
+                            # ---------------------------------
+                            # READ FILE
+                            # ---------------------------------
+                            {
+                                "name": "read_file_tool",
+                                "description": "Read the contents of a specific file from the workspace.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "file_path": {
+                                            "type": "string",
+                                            "description": "Relative path to the file (e.g., 'models/staging/stg_accounts.sql')"
+                                        }
+                                    },
+                                    "required": ["file_path"]
+                                }
+                            },
 
                             # ---------------------------------
                             # COMMAND EXECUTION
@@ -869,10 +886,23 @@ def handle_input():
                             ""
                         )
                     )
-
+                    
+                # ---------------------------------------------
+                # Read File
+                # ---------------------------------------------
+                elif tool_name == "read_file_tool":
+                    file_path = arguments.get("file_path", "")
+                    full_path = os.path.join(WORKSPACE, file_path)
+                    
+                    if os.path.exists(full_path) and os.path.isfile(full_path):
+                        with open(full_path, 'r', encoding='utf-8') as f:
+                            output_text = f.read()
+                    else:
+                        output_text = f"Error: File not found at {full_path}" 
                 # ---------------------------------------------
                 # Commands
                 # ---------------------------------------------
+                
 
                 elif tool_name == "run_commands":
 
