@@ -22,6 +22,11 @@ of what your file tool is technically capable of.
 ## Checklist
 - [ ] Hashing rule: MD5_BINARY appears ONLY in a staging FINAL layer or
       a Hub/Link ghost-record CTE - BLOCK if found anywhere else
+- [ ] Ghost-record hashing is a special exception to the normal Hub/Link
+      Hash Key formula: ghost records must use the exact literal sentinel
+      formulas defined in DV_STANDARD.MD - MD5_BINARY(UPPER('0')),
+      MD5_BINARY(UPPER('-1')), and MD5_BINARY(UPPER('-2')) respectively.
+      Do not require BKCC or CONCAT_WS hashing for ghost records.
 - [ ] Staging: full 6-layer SRC/LOGIC/RENAME/FILTER/JOIN/FINAL structure
 - [ ] Staging models: REC_SRC and BKCC are selected from a JOIN to
       REF_SOURCE_SYSTEM - BLOCK if either appears as a hardcoded
