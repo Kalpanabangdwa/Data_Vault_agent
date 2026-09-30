@@ -356,7 +356,7 @@ LOGIC_S AS (
     SELECT 
         NULLIF(TRIM(CAST(<driver_bk_col> AS VARCHAR)), '') AS <ENTITY>_BK,
         <other_columns>,
-        CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ AS LOAD_DTS
+        CAST('1900-01-01 00:00:00' AS TIMESTAMP_NTZ) AS LOAD_DTS
     FROM SRC_S
 ),
 LOGIC_A AS ( SELECT * FROM SRC_A ),
@@ -512,7 +512,7 @@ SELECT
     MD5_BINARY(GR.VALUE) AS <ENTITY>_HK,
     '^^||^^'::BINARY AS HASHDIFF,
     -- Agent must insert NULL AS <column_name> for every payload column here
-    CONVERT_TIMEZONE('UTC','1900-01-01'::TIMESTAMP) AS LOAD_DTS,
+    CAST('1900-01-01 00:00:00' AS TIMESTAMP_NTZ) AS LOAD_DTS,
     'SYSTEM' AS REC_SRC
 FROM TABLE(strtok_split_to_table('0|-1|-2', '|')) AS GR
 {% endif %}
