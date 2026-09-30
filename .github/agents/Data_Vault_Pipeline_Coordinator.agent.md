@@ -163,7 +163,7 @@ of truth for the dbt selection.
 
 Use `execute/runInTerminal`.
 
-Proceed to PR creation only when dbt exits with code 0.
+Proceed to PR creation only when dbt exits with ERROR = 0.
 
 6. PR HANDOFF:
 

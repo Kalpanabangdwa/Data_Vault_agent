@@ -50,7 +50,7 @@ model change into a branch and PR, executing every step yourself.
    authorization to proceed. Run this exact sequence via
    `execute/runInTerminal`, in order, checking each command's output
    before running the next:
-   a. `git checkout -b <branch-name>`
+   a. `git branch --show-current` (Verify you are actively on the <TICKET_ID>_DEV branch created by the Model Generator. If the output is main, STOP and report an error).
    b. `git add <exact file path(s) - one add per file, never -A>`
    c. `git commit -m "<commit message>"`
    d. `git push -u origin <branch-name>`

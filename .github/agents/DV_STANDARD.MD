@@ -148,15 +148,15 @@ project.
 For this POC, the source metadata convention is:
 
 - `RAW_CORE_BANKING` uses `BKCC = SAP_ECC`.
-- `RAW_CARD_PROCESSOR` uses `BKCC = CARD_PROCESSOR`.
+- `RAW_CARD_PROCESSOR` uses `BKCC = SAP_ECC`.
 - `REC_SRC` is constructed as `<BKCC>_<TABLE_NAME>`.
 
 Examples:
 
 - `RAW_CORE_BANKING.BRANCHES` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_BRANCHES`
 - `RAW_CORE_BANKING.CUSTOMERS` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_CUSTOMERS`
-- `RAW_CARD_PROCESSOR.CARDS` → `BKCC = CARD_PROCESSOR`, `REC_SRC = CARD_PROCESSOR_CARDS`
-- `RAW_CARD_PROCESSOR.CUSTOMERS` → `BKCC = CARD_PROCESSOR`, `REC_SRC = CARD_PROCESSOR_CUSTOMERS`
+- `RAW_CARD_PROCESSOR.CARDS` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_CARDS`
+- `RAW_CARD_PROCESSOR.CUSTOMERS` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_CUSTOMERS`
 
 The resolution priority is:
 
@@ -209,6 +209,7 @@ Examples:
 {{ source('Raw_core_banking', 'ACCOUNTS') }}
 {{ source('Raw_card_processor', 'CARDS') }}
 {{ source('control', 'REF_SOURCE_SYSTEM') }}
+```
 
 ### REC_SRC
 
@@ -255,95 +256,6 @@ If the requested driver table does not exist:
 - Report the exact table name that was searched.
 - Do not generate a staging model using an assumed or placeholder source. 
 
-## Hash Key Formula
-**Default (no BKCC):**
-```sql
-MD5_BINARY(UPPER(CONCAT_WS('||',
-    COALESCE(NULLIF(TRIM(CAST(<bk_col> AS VARCHAR)), ''), '^^')
-)))
-
-```
-
-### Staging Template
-(Use this exact multi-stream syntax structure, adjusting column names and joins based on the ticket)
-WITH 
-SRC_S AS ( SELECT * FROM {{ source('<schema>', '<DRIVER_TABLE>') }} ),
-SRC_A AS ( SELECT * FROM {{ source('control', 'REF_SOURCE_SYSTEM') }} ),
-
-LOGIC_S AS (
-    SELECT 
-        NULLIF(TRIM(CAST(<driver_bk_col> AS VARCHAR)), '') AS <ENTITY>_BK,
-        <other_columns>,
-        CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ AS LOAD_DTS
-    FROM SRC_S
-),
-LOGIC_A AS ( SELECT * FROM SRC_A ),
-
-RENAME_S AS (
-    SELECT <ENTITY>_BK, <other_columns>, LOAD_DTS FROM LOGIC_S
-),
-RENAME_A AS (
-    SELECT TABLE_NAME, REC_SRC, BKCC FROM LOGIC_A
-),
-
-FILTER_S AS (
-    SELECT * FROM RENAME_S WHERE <ENTITY>_BK IS NOT NULL
-),
-FILTER_A AS (
-    SELECT * FROM RENAME_A WHERE TABLE_NAME = '<DRIVER_TABLE>'
-),
-
-JOIN_RESULT AS (
-    SELECT 
-        s.*, 
-        a.REC_SRC, 
-        a.BKCC
-    FROM FILTER_S s
-    INNER JOIN FILTER_A a ON '1' = '1'
-    -- LEFT JOIN FILTER_S2 s2 ON s.<key> = s2.<key> (If secondary lookups exist)
-),
-
-FINAL AS (
-    SELECT 
-        *,
-        MD5_BINARY(UPPER(CONCAT_WS('||',
-            COALESCE(NULLIF(TRIM(CAST(<ENTITY>_BK AS VARCHAR)), ''), '^^'),
-            COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
-        ))) AS <ENTITY>_HK,
-        MD5_BINARY(UPPER(NULLIF(CONCAT(
-            IFNULL(TRIM(<payload_col_1>::text), '^^'), '||',
-            IFNULL(TRIM(<payload_col_2>::text), '^^')
-        ), '^^||^^'))) AS HASHDIFF
-    FROM JOIN_RESULT
-)
-SELECT * FROM FINAL
-
-**With BKCC (used when a ticket's Hub config specifies it - BKCC is always the LAST component when included):**
-
-```sql
-MD5_BINARY(UPPER(CONCAT_WS('||',
-    COALESCE(NULLIF(TRIM(CAST(<bk_col> AS VARCHAR)), ''), '^^'),
-    COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
-)))
-
-```
-
-Multi-key (Link) hashes concatenate multiple components in a fixed order, with BKCC last if the ticket includes it.
-
-**Precedence rule:** when a ticket explicitly specifies the HK formula (which columns, whether BKCC is included), the ticket's spec is followed exactly, even if it differs from this section's default. This section defines the default for when a ticket doesn't specify one.
-
-## HASHDIFF Formula (staging, for Satellites)
-
-```sql
-MD5_BINARY(UPPER(NULLIF(CONCAT(
-      IFNULL(TRIM(<col1>::text), '^^') 
-    , '||', IFNULL(TRIM(<col2>::text), '^^')
-    -- one line per descriptive column
-), '^^||^^')))
-
-```
-
-HASHDIFF always excludes grain columns (the Hub/Link's own `_HK`/`_BK`), audit columns, and BKCC - it only fingerprints genuinely descriptive, changeable columns.
 
 ## Cross-Source Entity Matching
 
@@ -368,23 +280,16 @@ MD5_BINARY(UPPER('0'))   -- BK = '0'   (SYSTEM)
 MD5_BINARY(UPPER('-1'))  -- BK = '-1'  (unknown, required)
 MD5_BINARY(UPPER('-2'))  -- BK = '-2'  (unknown, optional)
 
-```
 
 LOAD_DTS = `'1900-01-01T00:00:00'::TIMESTAMP_NTZ`, REC_SRC = `'SYSTEM'`.
 Each ghost row's `_HK` must hash its OWN sentinel value ('0', '-1', '-2' respectively) - never reuse the same hash across all three rows.
+```
 
 ## Satellite Structure
 
 Select `_HK` and `HASHDIFF` straight from staging (never recompute).
 BKCC is never part of a Satellite - it's a Hub-only identity column, not a descriptive attribute.
 
-```sql
-{% if is_incremental() %}
-WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
-{% endif %}
-QUALIFY ROW_NUMBER() OVER (PARTITION BY <parent>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
-
-```
 
 Every satellite gets a matching `.yml` with `dbt_constraints.primary_key` (`<parent>_hk` + `load_dts`) and `dbt_constraints.foreign_key` back to its parent Hub or Link.
 
@@ -438,7 +343,77 @@ A Link stores only hash keys + metadata. Any descriptive attribute of the relati
 
 ### Staging Template
 
-(Staging models do not use a rigid copy-paste template; they must be dynamically constructed using the **Staging Model Architecture (Multi-Stream)** rules defined above.)
+### Staging Template
+(Staging models do not use a rigid copy-paste template; they must be dynamically constructed using the **Staging Model Architecture (Multi-Stream)**  rules defined above , the template given below is default when there is no )
+
+```sql
+WITH 
+SRC_S AS ( SELECT * FROM {{ source('<schema>', '<DRIVER_TABLE>') }} ),
+SRC_A AS ( SELECT * FROM {{ source('control', 'REF_SOURCE_SYSTEM') }} ),
+
+LOGIC_S AS (
+    SELECT 
+        NULLIF(TRIM(CAST(<driver_bk_col> AS VARCHAR)), '') AS <ENTITY>_BK,
+        <other_columns>,
+        CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ AS LOAD_DTS
+    FROM SRC_S
+),
+LOGIC_A AS ( SELECT * FROM SRC_A ),
+
+RENAME_S AS (
+    SELECT <ENTITY>_BK, <other_columns>, LOAD_DTS FROM LOGIC_S
+),
+RENAME_A AS (
+    SELECT TABLE_NAME, REC_SRC, BKCC FROM LOGIC_A
+),
+
+FILTER_S AS (
+    SELECT * FROM RENAME_S WHERE <ENTITY>_BK IS NOT NULL
+),
+FILTER_A AS (
+    SELECT * FROM RENAME_A WHERE TABLE_NAME = '<DRIVER_TABLE>'
+),
+
+JOIN_RESULT AS (
+    SELECT 
+        s.*, 
+        a.REC_SRC, 
+        a.BKCC
+    FROM FILTER_S s
+    INNER JOIN FILTER_A a ON '1' = '1'
+    -- LEFT JOIN FILTER_S2 s2 ON s.<key> = s2.<key> (If secondary lookups exist)
+),
+
+FINAL AS (
+    SELECT 
+        *,
+        MD5_BINARY(UPPER(CONCAT_WS('||',
+            COALESCE(NULLIF(TRIM(CAST(<ENTITY>_BK AS VARCHAR)), ''), '^^'),
+            COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
+        ))) AS <ENTITY>_HK,
+        MD5_BINARY(UPPER(NULLIF(CONCAT(
+            IFNULL(TRIM(<payload_col_1>::text), '^^'), '||',
+            IFNULL(TRIM(<payload_col_2>::text), '^^')
+        ), '^^||^^'))) AS HASHDIFF
+    FROM JOIN_RESULT
+)
+SELECT * FROM FINAL
+
+--With BKCC (used when a ticket's Hub config specifies it - BKCC is always the LAST component when included):**
+
+MD5_BINARY(UPPER(CONCAT_WS('||',
+    COALESCE(NULLIF(TRIM(CAST(<bk_col> AS VARCHAR)), ''), '^^'),
+    COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
+)))
+
+
+--Hash Key Formula
+--Default (no BKCC):**
+MD5_BINARY(UPPER(CONCAT_WS('||',
+    COALESCE(NULLIF(TRIM(CAST(<bk_col> AS VARCHAR)), ''), '^^')
+)))
+
+```
 
 ### Hub template (5-stage)
 
@@ -477,11 +452,40 @@ SELECT * FROM FINAL
 
 ```
 
+
+### Hub YAML template
+
+Every Hub must be accompanied by a `.yml` file that defines its table-level tests exactly as follows, substituting the model name and hash key column:
+
+```yaml
+version: 2
+models:
+  - name: <hub_model_name>
+    tests:
+      - dbt_constraints.primary_key:
+          arguments:
+            column_names:
+              - <ENTITY>_HK
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          config:
+            severity: warn
+          arguments:
+            min_value: 4
+
+```
+
 Link template follows the identical shape, with two parent `_HK` columns (e.g. `CUSTOMER_HK`, `ACCOUNT_HK`) plus the Link's own `_LHK` in place of a single entity `_HK`/`_BK` pair.
 
 ### Satellite template
 
 ```sql
+
+
+{% if is_incremental() %}
+WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
+{% endif %}
+QUALIFY ROW_NUMBER() OVER (PARTITION BY <parent>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
+
 {{ config(materialized='incremental', unique_key='<ENTITY>_HK') }}
 WITH SRC AS ( SELECT * FROM {{ ref('<staging_model>') }} ),
 LOGIC AS (
@@ -490,10 +494,10 @@ LOGIC AS (
 ),
 FINAL AS (
     SELECT * FROM LOGIC
-    {% if is_incremental() and var('enable_hub_dedup_check', true) %}
+    {% if is_incremental() %}
     WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
     {% endif %}
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY <ENTITY>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY <parent>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
 )
 SELECT * FROM FINAL
 

@@ -50,7 +50,7 @@ The Coordinator may invoke you in one of two modes:
 
 ## Process
 
-1. Read .github/agents/DV_STANDARD.MD in full, especially the
+1. Read `.github/agents/DV_STANDARD.MD` in full, especially the
    "Self-Contained Generation Templates" section and the
    "Ticket-Driven Workflow" section.
 
@@ -63,7 +63,7 @@ ticket.
 
 The authoritative REC_SRC/BKCC mapping is maintained in:
 
-CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM
+`CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM`
 
 Resolve the physical source table's database, schema, and table name
 before performing the REF_SOURCE_SYSTEM lookup.
@@ -72,12 +72,12 @@ Filter the control table using both TABLE_SCHEMA and TABLE_NAME so that
 tables with the same name in different source schemas are not ambiguous.
 
 For example:
-
+```sql
 SELECT TABLE_SCHEMA, TABLE_NAME, REC_SRC, BKCC
 FROM CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM
 WHERE TABLE_SCHEMA = '<PHYSICAL_SCHEMA>'
   AND TABLE_NAME = '<DRIVER_TABLE>';
-
+```
 If the ticket explicitly provides REC_SRC and/or BKCC, the explicitly
 provided value takes priority for that field.
 
@@ -111,7 +111,7 @@ TABLE_NAME:
 1b. SOURCE REGISTRATION RESOLUTION - Resolve the dbt source() name from
 the current project file:
 
-dv_gen_project/models/staging/sources.yml
+`dv_gen_project/models/staging/sources.yml`
 
 The physical Snowflake source table and the dbt source() registration are
 separate concerns.
@@ -181,7 +181,7 @@ hash (e.g. "hash of customer_id, BKCC"), use exactly those columns,
 in exactly that order, with BKCC last if included.
 
 This overrides DV_STANDARD.MD's default Hash Key Formula section when
-the two differ - the ticket's explicit spec always wins.
+the two differ - the ticket's explicit specification always wins.
 
 2. RULES FOR COLUMN ROUTING:
 
@@ -217,7 +217,7 @@ the two differ - the ticket's explicit spec always wins.
 
    4a. Generate a matching staging .yml in the same turn as the staging
     .sql file, at the same path with .yml extension. Use this pattern:
-
+```yaml
     version: 2
     models:
       - name: <staging_model_name>
@@ -232,11 +232,13 @@ the two differ - the ticket's explicit spec always wins.
                 - <BK_COLUMN>
                 - LOAD_DTS
 
+```
     Do not use the deprecated `tests:` key - always `data_tests:`.
 
-5. Generate the Hub (or Link) model using the Hub/Link template,
+5. Generate the Hub model using the Hub template,
    selecting _HK/_BK from staging - never recompute a hash here.
-
+    
+   Generate its matching .yml test file as per the  ### Hub YAML template template in DV_STANDARD.MD.
    Include all 5 stages (harvest, consolidate, incremental, dedup,
    ghost records) even for a single-source Hub.
 
@@ -299,9 +301,10 @@ the two differ - the ticket's explicit spec always wins.
   1. Staging SQL
   2. Staging YAML
   3. Hub/Link SQL
-  4. Satellite SQL
-  5. Satellite YAML
-  6. Any modified source configuration file
+  4. Hub/Link YAML
+  5. Satellite SQL
+  6. Satellite YAML
+  7. Any modified source configuration file
 
    Do not create or modify any files at this stage.
 
