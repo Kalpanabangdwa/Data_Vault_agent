@@ -22,7 +22,7 @@ models:
       link:
         +schema: RAW_VAULT
         +materialized: incremental
-      satellite:
+      satellites:
         +schema: RAW_VAULT
         +materialized: incremental
     info_marts:
