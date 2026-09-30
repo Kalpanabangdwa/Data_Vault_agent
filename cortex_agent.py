@@ -120,11 +120,11 @@ def validate_model(sql: str, model_type: str) -> str:
     if model_type == "staging":
 
         required_ctes = [
-            "with src as",
-            "logic as",
-            "rename as",
-            "filter as",
-            "join_layer as",
+            "with src_s",
+            "logic_s",
+            "rename_s as",
+            "filter_s as",
+            "join_results as",
             "final as"
         ]
 

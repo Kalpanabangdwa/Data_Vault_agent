@@ -346,6 +346,7 @@ A Link stores only hash keys + metadata. Any descriptive attribute of the relati
 ### Staging Template
 (Staging models do not use a rigid copy-paste template; they must be dynamically constructed using the **Staging Model Architecture (Multi-Stream)**  rules defined above , the template given below is default when there is no )
 
+
 ```sql
 WITH 
 SRC_S AS ( SELECT * FROM {{ source('<schema>', '<DRIVER_TABLE>') }} ),
@@ -388,8 +389,8 @@ FINAL AS (
     SELECT 
         *,
         MD5_BINARY(UPPER(CONCAT_WS('||',
-            COALESCE(NULLIF(TRIM(CAST(<ENTITY>_BK AS VARCHAR)), ''), '^^'),
-            COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
+            COALESCE(NULLIF(TRIM(CAST(<ENTITY>_BK AS VARCHAR)), ''), '^^')
+            -- Agent: Add BKCC concatenation here only if explicitly specified by the ticket
         ))) AS <ENTITY>_HK,
         MD5_BINARY(UPPER(NULLIF(CONCAT(
             IFNULL(TRIM(<payload_col_1>::text), '^^'), '||',
@@ -398,20 +399,6 @@ FINAL AS (
     FROM JOIN_RESULT
 )
 SELECT * FROM FINAL
-
---With BKCC (used when a ticket's Hub config specifies it - BKCC is always the LAST component when included):**
-
-MD5_BINARY(UPPER(CONCAT_WS('||',
-    COALESCE(NULLIF(TRIM(CAST(<bk_col> AS VARCHAR)), ''), '^^'),
-    COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^')
-)))
-
-
---Hash Key Formula
---Default (no BKCC):**
-MD5_BINARY(UPPER(CONCAT_WS('||',
-    COALESCE(NULLIF(TRIM(CAST(<bk_col> AS VARCHAR)), ''), '^^')
-)))
 
 ```
 
@@ -478,15 +465,9 @@ Link template follows the identical shape, with two parent `_HK` columns (e.g. `
 
 ### Satellite template
 
+
 ```sql
-
-
-{% if is_incremental() %}
-WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
-{% endif %}
-QUALIFY ROW_NUMBER() OVER (PARTITION BY <parent>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
-
-{{ config(materialized='incremental', unique_key='<ENTITY>_HK') }}
+{{ config(materialized='incremental', unique_key=['<ENTITY>_HK', 'LOAD_DTS']) }}
 WITH SRC AS ( SELECT * FROM {{ ref('<staging_model>') }} ),
 LOGIC AS (
     SELECT <ENTITY>_HK, HASHDIFF, <all non-grain, non-BKCC columns>, LOAD_DTS, REC_SRC
@@ -494,13 +475,27 @@ LOGIC AS (
 ),
 FINAL AS (
     SELECT * FROM LOGIC
-    {% if is_incremental() %}
-    WHERE HASHDIFF NOT IN (SELECT HASHDIFF FROM {{ this }})
+    {% if is_incremental() and var('enable_sat_dedup_check', true) %}
+    WHERE NOT EXISTS (
+        SELECT 1 
+        FROM {{ this }} current_sat 
+        WHERE current_sat.<ENTITY>_HK = LOGIC.<ENTITY>_HK 
+          AND current_sat.HASHDIFF = LOGIC.HASHDIFF
+    )
     {% endif %}
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY <parent>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY <ENTITY>_HK, HASHDIFF ORDER BY LOAD_DTS DESC) = 1
 )
 SELECT * FROM FINAL
-
+{% if not is_incremental() %}
+UNION ALL
+SELECT        
+    MD5_BINARY(GR.VALUE) AS <ENTITY>_HK,
+    '^^||^^'::BINARY AS HASHDIFF,
+    -- Agent must insert NULL AS <column_name> for every payload column here
+    CONVERT_TIMEZONE('UTC','1900-01-01'::TIMESTAMP) AS LOAD_DTS,
+    'SYSTEM' AS REC_SRC
+FROM TABLE(strtok_split_to_table('0|-1|-2', '|')) AS GR
+{% endif %}
 ```
 
 ## Ticket-Driven Workflow
