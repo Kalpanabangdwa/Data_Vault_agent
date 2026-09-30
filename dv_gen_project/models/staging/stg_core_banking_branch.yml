@@ -1,0 +1,14 @@
+version: 2
+models:
+  - name: stg_core_banking_branch
+    description: Staging model for CUSTOM_AGENT.RAW_CORE_BANKING.BRANCHES
+    columns:
+      - name: BRANCH_BK
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - BRANCH_BK
+              - LOAD_DTS
