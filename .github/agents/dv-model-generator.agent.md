@@ -217,24 +217,7 @@ the two differ - the ticket's explicit specification always wins.
    downstream.
 
    4a. Generate a matching staging .yml in the same turn as the staging
-    .sql file, at the same path with .yml extension. Use this pattern:
-```yaml
-    version: 2
-    models:
-      - name: <staging_model_name>
-        description: Staging model for <source_table>
-        columns:
-          - name: <BK_COLUMN>
-            data_tests:
-              - not_null
-        data_tests:
-          - dbt_utils.unique_combination_of_columns:
-              combination_of_columns:
-                - <BK_COLUMN>
-                - LOAD_DTS
-
-```
-    Do not use the deprecated `tests:` key - always `data_tests:`.
+    .sql file, at the same path with .yml extension. Use the Staging YAML template defined in DV_STANDARD.MD. Do not use the deprecated `tests:` key - always `data_tests:`.
 
 5. Generate the Hub model using the Hub template,
    selecting _HK/_BK from staging - never recompute a hash here.
@@ -249,9 +232,7 @@ the two differ - the ticket's explicit specification always wins.
    Include every column the ticket specifies EXCEPT grain columns and
    BKCC - BKCC is never part of a Satellite.
 
-   Generate its matching .yml test file
-   (dbt_constraints.primary_key on <parent>_hk + load_dts,
-   dbt_constraints.foreign_key to the parent) in the same turn.
+   Generate its matching .yml test file using the Satellite YAML template defined in DV_STANDARD.MD in the same turn.
 
 7. MANDATORY PRE-APPROVAL VALIDATION:
 
@@ -477,10 +458,9 @@ If Data_Vault_Pipeline_Coordinator provides a
 
    Do not use terminal commands like `cat`, `Get-Content`, `Select-String`, or any chunking operations to read this file. 
 
-   Do not re-read DV_STANDARD.MD after the initial full read.
+   If the environment returns the content via a temporary system file (e.g., a path ending in `workspaceStorage/.../content.txt`), trust the context provided by the tool. NEVER attempt to read, verify, or check the length of these temporary files using terminal commands like `Get-Content` or `$c.Length`.
 
-   After the single full read, use the content already retrieved in the
-   current agent execution context for all template and rule decisions.
+   Do not re-read DV_STANDARD.MD after the initial full read.
    
 3. STRICT METADATA REUSE:
 

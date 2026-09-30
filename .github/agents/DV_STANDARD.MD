@@ -402,6 +402,26 @@ SELECT * FROM FINAL
 
 ```
 
+### Staging YAML template
+
+Every staging model must be accompanied by a `.yml` file defined exactly as follows:
+
+```yaml
+version: 2
+models:
+  - name: <staging_model_name>
+    description: Staging model for <source_table>
+    columns:
+      - name: <BK_COLUMN>
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - <BK_COLUMN>
+              - LOAD_DTS
+```
 ### Hub template (5-stage)
 
 ```sql
@@ -498,6 +518,25 @@ FROM TABLE(strtok_split_to_table('0|-1|-2', '|')) AS GR
 {% endif %}
 ```
 
+### Satellite YAML template
+
+Every Satellite must be accompanied by a `.yml` file that defines its primary and foreign keys exactly as follows. (Note: The `foreign_key` test requires `pk_table_name` and `pk_column_name`, NOT `column_names`).
+
+```yaml
+version: 2
+models:
+  - name: <satellite_model_name>
+    data_tests:
+      - dbt_constraints.primary_key:
+          arguments:
+            column_names:
+              - <ENTITY>_HK
+              - LOAD_DTS
+      - dbt_constraints.foreign_key:
+          arguments:
+            pk_table_name: ref('<parent_hub_or_link_model_name>')
+            pk_column_name: <ENTITY>_HK
+```
 ## Ticket-Driven Workflow
 
 When given a Jira-style ticket specifying source table, HK/BK formula, grain columns, and Satellite columns:
