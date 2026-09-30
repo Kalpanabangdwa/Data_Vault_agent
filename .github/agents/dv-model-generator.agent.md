@@ -12,6 +12,7 @@ description: >
 tools:
   - snowflake-mcp/sql_exec_tool
   - snowflake-mcp/validate_model_tool
+  - snowflake-mcp/read_file_tool
   - edit
   - execute/runInTerminal
   - execute/getTerminalOutput
@@ -349,18 +350,19 @@ the two differ - the ticket's explicit specification always wins.
    f. After the approval package is confirmed, use execute/runInTerminal to
    prepare the ticket branch for file creation.
 
-   For the FIRST approved execution for a ticket:
-
-    git checkout main
-    git pull origin main
-    git checkout -b <TICKET_ID>_DEV
+   For the FIRST approved execution for a ticket, run these exactly:
+   
+   git status --porcelain (If this returns output, STOP and tell the user the workspace must be clean before proceeding).
+   git checkout main
+   git pull origin main
+   git checkout -b <TICKET_ID>_DEV (If this fails because the branch exists, STOP and report the error).
 
    For a CORRECTED approved proposal after reviewer feedback:
 
-    Do NOT checkout main.
-    Do NOT create a new branch.
-    Verify that the current branch is <TICKET_ID>_DEV and continue using
-    that existing ticket branch.
+   Do NOT checkout main.
+   Do NOT create a new branch.
+   Verify that the current branch is <TICKET_ID>_DEV and continue using
+   that existing ticket branch.
 
    g. Confirm the required branch state is correct before using edit.
 
@@ -471,25 +473,15 @@ If Data_Vault_Pipeline_Coordinator provides a
 
 2. NO FILE CHUNKING OR REPEATED STANDARD READS:
 
-   Read `.github/agents/DV_STANDARD.MD` exactly once using a single
-   Get-Content -Raw command.
+   Read `.github/agents/DV_STANDARD.MD` exactly once in its entirety using the `snowflake-mcp/read_file_tool`.
 
-   Use exactly:
-
-   Get-Content -Raw ".github/agents/DV_STANDARD.MD"
-
-   Do not run Select-String, Select-Object -First,
-   Select-Object -Skip, substring operations, line-range extraction,
-   or any other command that reads only part of DV_STANDARD.MD.
+   Do not use terminal commands like `cat`, `Get-Content`, `Select-String`, or any chunking operations to read this file. 
 
    Do not re-read DV_STANDARD.MD after the initial full read.
 
    After the single full read, use the content already retrieved in the
    current agent execution context for all template and rule decisions.
-
-   Do not search DV_STANDARD.MD for individual sections using
-   additional terminal commands.
-
+   
 3. STRICT METADATA REUSE:
 
    Query the authoritative control/reference metadata once for the

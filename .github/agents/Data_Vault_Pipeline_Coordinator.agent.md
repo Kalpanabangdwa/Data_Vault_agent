@@ -134,6 +134,8 @@ You are the owner of the human approval gate and the workflow state.
    If the reviewer response does not begin with either exact verdict,
    stop the workflow and request a valid reviewer response.
 
+### 5. DBT BUILD
+
 After receiving exactly:
 
 `VERDICT: APPROVE`
@@ -141,29 +143,21 @@ After receiving exactly:
 the Coordinator must execute dbt using ALL generated dbt model names,
 including prerequisite staging models.
 
-Use:
+Use the `execute/runInTerminal` tool and chain the commands to ensure you are in the correct working directory and can capture the exact exit code:
 
-`dbt build --select <all_generated_model_names>`
+`cd dv_gen_project; dbt build --select <all_generated_model_names>; Write-Output "DBT_EXIT=$LASTEXITCODE"`
 
 For example, if the generated models are:
-
 - stg_card_processor_card
 - hub_card
 - sat_card
 
 execute:
+`cd dv_gen_project; dbt build --select stg_card_processor_card hub_card sat_card; Write-Output "DBT_EXIT=$LASTEXITCODE"`
 
-`dbt build --select stg_card_processor_card hub_card sat_card`
+Do not omit a generated staging model when building downstream Hub, Link, or Satellite models. The generated model list returned by dv-model-generator is the source of truth for the dbt selection.
 
-Do not omit a generated staging model when building downstream
-Hub, Link, or Satellite models.
-
-The generated model list returned by dv-model-generator is the source
-of truth for the dbt selection.
-
-Use `execute/runInTerminal`.
-
-Proceed to PR creation only when dbt exits with ERROR = 0.
+Proceed to PR creation only if the terminal output confirms `DBT_EXIT=0`. If the build fails, STOP and report the errors to the user.
 
 6. PR HANDOFF:
 
@@ -172,7 +166,7 @@ Proceed to PR creation only when dbt exits with ERROR = 0.
    - explicit user approval;
    - successful file creation;
    - `VERDICT: APPROVE` from dv-code-reviewer;
-   - successful `dbt build` with 0 errors;
+   - successful `dbt build` with 0 errors (`DBT_EXIT=0`);
 
    call `dv-pr-generator`.
 
