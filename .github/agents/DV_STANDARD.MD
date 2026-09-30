@@ -63,8 +63,11 @@ All `_HK`, `_LHK`, and `HASHDIFF_*` columns are computed EXACTLY ONCE, in the
 staging model, using MD5_BINARY. Hub, Link, and Satellite models NEVER call
 MD5_BINARY on real business data - they only SELECT pre-computed hash columns.
 
-**The one allowed exception**: ghost record injection (ghost records are
-synthetic system rows with no source data to stage - see below).
+**The one allowed exception**: ghost record injection in Hub/Link models only
+(ghost records are synthetic system rows with no source data to stage - see
+below). Satellites are NEVER allowed to call MD5_BINARY, even for ghost
+records - a Satellite's ghost `_HK` must be sourced from its parent Hub/Link's
+already-computed ghost rows via `ref(...)`, never recomputed.
 
 ## Staging Model Architecture (Multi-Stream)
 
@@ -389,8 +392,9 @@ FINAL AS (
     SELECT 
         *,
         MD5_BINARY(UPPER(CONCAT_WS('||',
+            COALESCE(NULLIF(TRIM(CAST(BKCC AS VARCHAR)), ''), '^^'),
             COALESCE(NULLIF(TRIM(CAST(<ENTITY>_BK AS VARCHAR)), ''), '^^')
-            -- Agent: Add BKCC concatenation here only if explicitly specified by the ticket
+            -- Default formula always includes BKCC (multi-source key uniqueness). Only omit BKCC if the ticket explicitly specifies a BK-only formula.
         ))) AS <ENTITY>_HK,
         MD5_BINARY(UPPER(NULLIF(CONCAT(
             IFNULL(TRIM(<payload_col_1>::text), '^^'), '||',
@@ -509,18 +513,19 @@ SELECT * FROM FINAL
 {% if not is_incremental() %}
 UNION ALL
 SELECT        
-    MD5_BINARY(GR.VALUE) AS <ENTITY>_HK,
-    '^^||^^'::BINARY AS HASHDIFF,
+    h.<ENTITY>_HK,
+    TO_BINARY('^^||^^', 'UTF-8') AS HASHDIFF,
     -- Agent must insert NULL AS <column_name> for every payload column here
     CAST('1900-01-01 00:00:00' AS TIMESTAMP_NTZ) AS LOAD_DTS,
     'SYSTEM' AS REC_SRC
-FROM TABLE(strtok_split_to_table('0|-1|-2', '|')) AS GR
+FROM {{ ref('<parent_hub_or_link_model_name>') }} h
+WHERE h.<ENTITY>_BK IN ('0', '-1', '-2')
 {% endif %}
 ```
 
 ### Satellite YAML template
 
-Every Satellite must be accompanied by a `.yml` file that defines its primary and foreign keys exactly as follows. (Note: The `foreign_key` test requires `pk_table_name` and `pk_column_name`, NOT `column_names`).
+Every Satellite must be accompanied by a `.yml` file that defines its primary and foreign keys exactly as follows. (Note: the `foreign_key` test requires `fk_column_name` - the child-side column on this Satellite - in addition to `pk_table_name` and `pk_column_name`; omitting `fk_column_name` compiles to an empty SELECT and fails).
 
 ```yaml
 version: 2
@@ -534,6 +539,7 @@ models:
               - LOAD_DTS
       - dbt_constraints.foreign_key:
           arguments:
+            fk_column_name: <ENTITY>_HK
             pk_table_name: ref('<parent_hub_or_link_model_name>')
             pk_column_name: <ENTITY>_HK
 ```
