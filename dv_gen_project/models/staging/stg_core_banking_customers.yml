@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: stg_core_banking_customers
+    description: "Staging model for CUSTOM_AGENT.RAW_CORE_BANKING.CUSTOMERS. Computes HUB_CUSTOMER_HK and SAT_CUSTOMER_HASHDIFF for downstream hub_customer and sat_customer."
+    columns:
+      - name: HUB_CUSTOMER_HK
+        description: "Hash key for hub_customer, derived from CUST_ID and BKCC."
+        data_tests: [not_null]
+      - name: CUST_ID
+        description: "Business key - customer identifier."
+        data_tests: [not_null]
+      - name: BKCC
+        description: "Business key collision code, resolved from REF_SOURCE_SYSTEM."
+        data_tests: [not_null]
+      - name: FULL_NAME
+        description: "Customer full name."
+      - name: DOB
+        description: "Customer date of birth."
+      - name: EMAIL
+        description: "Customer email address."
+      - name: PHONE
+        description: "Customer phone number."
+      - name: CREATED_DATE
+        description: "Source system record creation date."
+      - name: SAT_CUSTOMER_HASHDIFF
+        description: "Hash diff of descriptive attributes used by sat_customer for change detection."
+        data_tests: [not_null]
+      - name: REC_SRC
+        description: "Record source, resolved from REF_SOURCE_SYSTEM."
+        data_tests: [not_null]
+      - name: LOAD_DATE
+        description: "Load timestamp."
+        data_tests: [not_null]
