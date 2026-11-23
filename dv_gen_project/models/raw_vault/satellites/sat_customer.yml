@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: sat_customer
+    description: "Satellite holding descriptive attributes for hub_customer."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - HUB_CUSTOMER_HK
+            - LOAD_DATE
+    columns:
+      - name: HUB_CUSTOMER_HK
+        description: "Foreign key to hub_customer."
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('hub_customer')
+              field: HUB_CUSTOMER_HK
+      - name: SAT_CUSTOMER_HASHDIFF
+        description: "Hash diff used for change detection."
+        data_tests: [not_null]
+      - name: FULL_NAME
+        description: "Customer full name."
+      - name: DOB
+        description: "Customer date of birth."
+      - name: EMAIL
+        description: "Customer email address."
+      - name: PHONE
+        description: "Customer phone number."
+      - name: REC_SRC
+        description: "Record source."
+        data_tests: [not_null]
+      - name: LOAD_DATE
+        description: "Load timestamp."
+        data_tests: [not_null]

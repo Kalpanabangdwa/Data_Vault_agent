@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: hub_customer
+    description: "Hub for the Customer business entity. Grain = CUST_ID."
+    columns:
+      - name: HUB_CUSTOMER_HK
+        description: "Primary hash key for hub_customer."
+        data_tests: [unique, not_null]
+      - name: CUST_ID
+        description: "Business key - customer identifier."
+        data_tests: [not_null]
+      - name: BKCC
+        description: "Business key collision code."
+        data_tests: [not_null]
+      - name: REC_SRC
+        description: "Record source."
+        data_tests: [not_null]
+      - name: LOAD_DATE
+        description: "Load timestamp."
+        data_tests: [not_null]
