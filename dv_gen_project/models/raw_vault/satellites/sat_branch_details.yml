@@ -1,0 +1,14 @@
+version: 2
+models:
+  - name: sat_branch_details
+    data_tests:
+      - dbt_constraints.primary_key:
+          arguments:
+            column_names:
+              - BRANCH_HK
+              - LOAD_DTS
+      - dbt_constraints.foreign_key:
+          arguments:
+            fk_column_name: BRANCH_HK
+            pk_table_name: ref('hub_branch')
+            pk_column_name: BRANCH_HK
