@@ -1,298 +1,265 @@
-# Agentic AI for Project Workflow Automation
+# Data Vault Agent: ticket → reviewed, tested pull request
 
-A multi-agent system that automates a full engineering workflow, **from ticket to reviewed, tested pull request**, with AI agents doing the work and humans approving at defined checkpoints.
+A set of cooperating AI agents (GitHub Copilot custom agents in VS Code) that take a ticket and produce a **reviewed, dbt-tested pull request** of Data Vault 2.0 models on Snowflake. Humans supply the ticket and approve every set of files before it is written; the agents do the rest.
 
-> **Use case implemented here:** generating Data Vault 2.0 models with dbt on Snowflake. The use case is only a vehicle. The agent architecture, the guardrails and the automation pattern are reusable for any ticket-driven workflow (see [Reusing this for other workflows](#9-reusing-this-for-other-workflows)).
-
-
-## 1. What this project is
-
-Most engineering work follows a repeatable lifecycle:
-
-```
-Ticket → Understand context → Build → Check against standards → Test → Review → Raise PR
-```
-
-Each step is usually manual, and each hand-off is a chance for delay or inconsistency. This project turns that lifecycle into an **automated pipeline run by cooperating AI agents**. Each agent has one job, a limited set of tools, and clear rules for when to proceed, retry, or stop and ask a human.
-
-The result is a workflow where a person supplies the **intent** (a ticket) and the **decisions** (approvals), and the agents handle the **execution**.
+> The Data Vault use case is the example. The agent pattern (coordinator → generator → reviewer → build → PR, with human gates) is reusable for any ticket-driven engineering work. See [Reusing this pattern](#9-reusing-this-pattern-for-other-work).
 
 ---
 
-## 2. Why agentic AI, and not just a chatbot
+## 1. What it does in one minute
 
-A single prompt to a chat assistant can draft code. It cannot run a controlled process. This project uses agents because the workflow needs things a chat reply doesn't provide:
+You give the **Coordinator** a ticket, either typed inline or as a Jira ID:
 
-| Need | Chat assistant | This agentic setup |
-|---|---|---|
-| Take actions (query a database, write files, run builds, open PRs) | Suggests commands for a human to run | Agents call tools directly and check the results |
-| Follow a multi-step process in order | Depends on the prompt and the user | A coordinator enforces the sequence |
-| Check its own work | Rarely, and not independently | A separate reviewer agent plus a deterministic validator |
-| Recover from failures | User pastes errors back manually | Review findings and build errors loop back automatically |
-| Respect organisational standards | Relies on what the model "remembers" | Reads a written standard on every run |
-| Stay safe | No built-in limits | Per-agent permissions, approval gates, stop-on-error rules |
-
-In short, agentic AI moves AI from *"helps me write"* to *"runs the process, under supervision."*
-
----
-
-## 3. Agentic patterns applied
-
-| Pattern | How it appears here |
-|---|---|
-| **Orchestrator-worker** | `Data_Vault_Pipeline_Coordinator` dispatches the generator, reviewer and PR agents in a fixed order and routes verdicts between them. |
-| **Specialised agents / separation of duties** | The agent that builds code is never the one that approves it. The reviewer is read-only and the PR agent only does git operations. |
-| **Generator ↔ reviewer feedback loop** | A `REQUEST CHANGES` verdict is sent back to the generator with the exact findings. Fixes are applied and re-checked, not restarted from scratch. |
-| **Tool use through MCP** | A local Model Context Protocol server exposes Snowflake SQL access, a validation tool and a git/PR tool to the agents. |
-| **Standards as context (grounding)** | Agents are told to work exclusively from a written standards file, so output follows the team's rules and not the model's general guesses. |
-| **Deterministic checks alongside LLM judgement** | A rule-based validator runs before anything is shown to a human, catching mechanical errors cheaply and reliably. |
-| **Live-context retrieval before acting** | The generator must fetch the real table schema from the database before producing any code. It does not assume the schema. |
-| **Human-in-the-loop gates** | Two explicit approvals: before files are written, and before the PR is created. |
-| **Bounded autonomy** | Agents have least-privilege tools, explicit "never do" rules, and stop on the first failure instead of improvising. |
-
----
-
-## 4. Architecture
-
-```mermaid
-flowchart TD
-    T[Ticket] --> C[Coordinator agent]
-    C --> G[Generator agent]
-    G -->|grounded in| S[(Standards file)]
-    G <-->|tools via MCP| M[MCP server]
-    M <--> DB[(Database)]
-    G -->|validate, then human approval| F[Generated files]
-    F --> R[Reviewer agent - read only]
-    R -->|REQUEST CHANGES + findings| G
-    R -->|APPROVE| B[Automated build and tests]
-    B -->|fail: stop and report| G
-    B -->|pass| H{Human gate}
-    H -->|approved| P[PR agent]
-    P --> PR[Pull request to main]
+```text
+Ticket: DV-101
+Source table: RAW_CORE_BANKING.BRANCHES
+Hub: hub_branch   (BK: BRANCH_CODE, HK = hash of BRANCH_CODE + BKCC)
+Grain columns: BRANCH_CODE
+Satellite: sat_branch_details   (columns: BRANCH_NAME, CITY)
 ```
 
-### Agents
+The Coordinator runs the whole flow. It is the only agent that calls other agents:
 
-| Agent | Responsibility | Tools | Can modify files? |
-|---|---|---|---|
-| `Data_Vault_Pipeline_Coordinator` | Orchestrates the sequence, parses verdicts, triggers the human gate | `runSubagent` | No |
-| `dv-model-generator` | Reads the ticket and standard, fetches live schema, builds and validates the deliverables | `sql_exec_tool`, `validate_model_tool`, `editFiles`, `runCommands` | Yes, only after explicit approval |
-| `dv-code-reviewer` | Audits output against the standard and returns a verdict with line-level findings | `sql_exec_tool` | **No** (read-only by design) |
-| `dv-pr-generator` | Stages the approved files, commits, pushes and opens the PR | `runCommands` | Git operations only |
-
-### Tool layer (MCP server: `cortex_agent.py`)
-
-A lightweight Python MCP server registered in `.vscode/mcp.json` as `snowflake-mcp`. It gives agents controlled access to the outside world:
-
-| Tool | Purpose |
-|---|---|
-| `sql_exec_tool` | Run SQL against Snowflake (used for schema discovery and reference-data checks). |
-| `validate_model_tool` | A rule-based validator that returns `{"pass": bool, "violations": [...]}` with no LLM involved. |
-| `execute_git_pr` | Create a branch, commit, push and open a PR via the GitHub CLI. |
-
-Agent behaviour lives in plain Markdown files in `.github/agents/`, so changing how an agent works means editing a text file. No code changes are needed.
+0. **Ticket input:** uses your inline spec, or asks the optional Jira agent to read the ticket.
+1. **Proposal:** the generator builds a staging model, a Hub/Link and optionally a Satellite with YAML tests. It follows `DV_STANDARD.MD` and the **live** Snowflake schema, and checks every SQL file with a rule-based validator (no AI involved). Nothing is written yet.
+2. **Your approval:** you answer yes or no to the proposed files.
+3. **Write files:** the generator writes exactly what you approved, on branch `<TICKET_ID>_DEV`.
+4. **Review:** a separate, read-only reviewer agent audits the files. Findings go back through the generator and to you again, for at most 3 rounds.
+5. **dbt build:** the Coordinator builds and tests the new models.
+6. **PR:** the PR agent commits only the approved files and opens the PR.
+7. **Report:** you get the branch, files, verdict, dbt result and PR URL.
 
 ---
 
-## 5. How the workflow runs
-
-1. **Dispatch.** The coordinator hands the ticket to the generator, instructing it to work only from the standards file and not to dig through git history (focus and speed rule).
-2. **Pre-flight checks.** The generator confirms prerequisites (the source system is registered in the control table) and fetches the live schema of the source table. If either is missing, it **stops and tells the user**.
-3. **Safe workspace.** It syncs `main` and creates a ticket-named branch (`<TICKET_ID>_DEV`).
-4. **Build.** It generates the deliverables strictly from the standard's templates.
-5. **Self-check.** The deterministic validator runs on every file. Failures are fixed and re-validated before a human sees anything.
-6. **Human approval #1.** The generator shows the output, the validation results and a mapping of ticket requirements to files, then asks for a yes or no. Nothing is written without it.
-7. **Independent review.** The reviewer agent audits the files and returns `APPROVE` or `REQUEST CHANGES`. On `REQUEST CHANGES`, the findings flow back to the generator and the loop repeats.
-8. **Automated verification.** On `APPROVE`, the pipeline runs `dbt snapshot` and `dbt build` for the generated models. A failed build halts the run and surfaces the logs.
-9. **Human approval #2.** The coordinator presents the approved files for sign-off.
-10. **PR creation.** The PR agent shows the full plan (branch, exact files, commit message, PR body), asks once more, and on approval runs the git and `gh` commands. It returns the real PR URL.
-
----
-
-## 6. The use case: Data Vault model generation
-
-The workflow above is applied to **generating Data Vault 2.0 models in dbt on Snowflake**. It is a good fit for automation because the work is highly repetitive, follows strict rules, and mistakes are costly.
-
-**Input:** a ticket naming the source table, business key, hash-key formula and the descriptive columns for a Satellite.
-
-**Output:** a staging view, a Hub (or Link), and optionally a Satellite with its tests, all validated, reviewed, built and raised as a PR.
-
-**What the standard (`DV_STANDARD.MD`) encodes for the agents:**
-
-- Naming and schema conventions per layer (staging, raw vault, marts)
-- Hashing happens once, in staging, and downstream models only select it
-- A fixed multi-layer staging structure and a fixed 5-stage Hub/Link structure
-- Ghost (sentinel) records, deduplication rules and incremental-loading patterns
-- Source-system metadata (`REC_SRC`, `BKCC`) is looked up from a governed reference table, never hardcoded
-- Satellite rules and the matching `.yml` constraint tests
-
-**dbt project (`dv_gen_project`)** routes each layer to its schema and materialization (staging as views in `STAGING`; Hubs, Links and Satellites as incremental models in `RAW_VAULT`; marts as views in `INFO_MART`). A working example is included: `stg_sap_ecc_branches`, `hub_branch` and `sat_branch_details` with its tests.
-
-Everything Data Vault specific lives in the standards file, the validator rules and the dbt project. The agent structure around it is independent of the use case.
-
----
-
-## 7. Guardrails: keeping autonomy safe
-
-Automation is only useful if it can be trusted. These controls are built into the agent definitions and the tool layer:
-
-| Guardrail | Mechanism |
-|---|---|
-| No changes without consent | The generator may not write files before an explicit user approval. |
-| Independent review | The reviewer has no write tools and cannot alter what it is reviewing. |
-| Two human checkpoints | Approval before files are written and before the PR is created. |
-| Grounded in reality | Live schema fetch is mandatory, and missing tables or source systems stop the run. |
-| No invented data | Agents may read the governed reference table but must never insert or edit rows in it. |
-| Deterministic validation first | `validate_model_tool` must pass before output is shown to a human. |
-| Fail-stop behaviour | Any failed command or build halts the pipeline and reports the error. Git/`gh` failures are not retried automatically. |
-| Safe git practice | No pushes to `main`, and the PR agent stages only specific approved files (no `git add -A`). |
-| Review required for PRs | The PR agent refuses to run without an explicit `APPROVE` verdict. |
-| Secrets stay local | `.env` is git-ignored, as are build artifacts and logs. |
-| Speed and scope limits | Agents are told not to run git-history searches, not to chunk-read files, and to scope schema queries to the named tables. |
-
----
-
-## 8. Effects on our projects
-
-**Faster delivery.** The steps between "ticket accepted" and "PR opened" run as a single guided session. Context gathering, building, checking and PR packaging no longer wait on manual hand-offs.
-
-**Less repetitive toil.** Engineers stop spending time on boilerplate and on style or structure checks, and can focus on business logic, design decisions and edge cases.
-
-**Consistent quality at scale.** Because every run reads the same standards and passes the same checks, output looks the same regardless of who raised the ticket or how many tickets are in flight.
-
-**Defects caught earlier.** Problems are intercepted in layers: the deterministic validator, then the reviewer agent, then the automated build and tests, and finally the human reviewer. Fewer issues reach the PR, and fewer still reach production.
-
-**Review time goes to what matters.** Human reviewers receive a PR that has already passed mechanical checks and a build, so their attention goes to intent and correctness.
-
-**Humans stay in control.** AI executes and people decide. Approval gates, a read-only reviewer and stop-on-error behaviour mean automation does not come at the cost of oversight.
-
-**Built-in traceability.** Ticket-named branches, a standard PR template and a recorded review verdict give each change a clear audit trail from request to merge.
-
-**Standards become executable.** Rules that used to live in wikis and people's heads are now enforced on every run. Changing the standard changes how all agents behave.
-
-**Easier onboarding and less key-person risk.** New team members get compliant output from day one, and process knowledge is captured in the agent files and standards instead of one or two experts.
-
-**Scales without more headcount.** More tickets can be processed in parallel without a matching increase in manual effort.
-
-**A reusable automation foundation.** The same coordinator, generator, reviewer and PR pattern can be applied to other workflows (next section).
-
----
-
-## 9. Reusing this for other workflows
-
-To apply the pattern to another ticket-driven process (for example API endpoint scaffolding, test generation, infrastructure-as-code changes, documentation updates, or report builds), keep the structure and swap the domain content:
-
-| Keep (generic) | Replace (domain-specific) |
-|---|---|
-| Coordinator, generator, reviewer and PR agent roles | The standards file (your team's rules and templates) |
-| Generate → validate → approve → review → build → PR sequence | The validator rules in `validate_model` |
-| Human approval gates and fail-stop rules | The reviewer's checklist |
-| MCP tool layer and git/PR automation | The pre-flight checks and build and test commands |
-| Branch naming and PR template | The tool integrations (a different database, API or service) |
-
----
-
-## 10. Repository structure
+## 2. Repository map
 
 ```
 .
-├── .github/
-│   └── agents/
-│       ├── Data_Vault_Pipeline_Coordinator.agent.md   # Orchestrator agent
-│       ├── dv-model-generator.agent.md                # Builder agent
-│       ├── dv-code-reviewer.agent.md                  # Read-only reviewer agent
-│       ├── dv-pr-generator.agent.md                   # Git / PR automation agent
-│       └── DV_STANDARD.MD                             # Standards and templates the agents are grounded in
-├── .vscode/
-│   └── mcp.json                                       # Registers the MCP server ("snowflake-mcp")
-├── cortex_agent.py                                    # MCP server: SQL, validator and git/PR tools
-├── dv_gen_project/                                    # dbt project holding the generated models (use case)
-│   ├── dbt_project.yml
-│   ├── macros/generate_schema_name.sql
-│   └── models/
-│       ├── staging/
-│       └── raw_vault/{hub,link,satellite}/
-├── .env                                               # Local credentials (git-ignored)
-└── .gitignore
+├── .github/agents/                         ← the agents (plain Markdown, edit to change behaviour)
+│   ├── Data_Vault_Pipeline_Coordinator.agent.md   Orchestrator: runs the steps in order, owns approvals
+│   ├── dv-model-generator.agent.md                Builds + validates the models, writes after approval
+│   ├── dv-code-reviewer.agent.md                  Read-only auditor: APPROVE / REQUEST CHANGES
+│   ├── dv-pr-generator.agent.md                   Stages approved files, commits, pushes, opens the PR
+│   ├── jira-ticket-agent.agent.md                 OPTIONAL: Jira fetch / comment / status
+│   └── DV_STANDARD.MD                             The rulebook and SQL/YAML templates all agents follow
+│
+├── mcp_servers/                            ← the tools the agents call (one file per area)
+│   ├── mcp_base.py              Shared MCP plumbing (stdio JSON-RPC loop), used by every server below
+│   ├── snowflake_mcp.py         sql_exec_tool                          → Snowflake
+│   ├── dv_validator_mcp.py      validate_model_tool                    → rule-based SQL checks
+│   ├── workspace_mcp.py         read_file_tool, run_commands, execute_git_pr → local files / git / gh
+│   └── jira_mcp.py              fetch_jira_ticket, add_jira_comment, update_jira_status → Jira (OPTIONAL)
+│
+├── .vscode/mcp.json                        Registers the four MCP servers with VS Code
+├── dv_gen_project/                         dbt project where generated models land (see its README)
+└── .env.example                            Template for credentials, copied to .env (git-ignored)
 ```
 
 ---
 
-## 11. Setup
+## 3. Agents and the tools they use
 
-**Prerequisites**
+| Agent | Job | Tools (MCP server → tool) | Can write files? |
+|---|---|---|---|
+| **Data_Vault_Pipeline_Coordinator** | Runs the pipeline in order, asks for approvals, reads verdicts, runs `dbt build` | `agent` (dispatch sub-agents), terminal | No |
+| **dv-model-generator** | Three modes: PROPOSAL (generate + validate, no writes), APPROVED EXECUTION (create branch, write the approved files), FIX (apply reviewer findings, no writes) | `snowflake-mcp/sql_exec_tool`, `dv-validator-mcp/validate_model_tool`, `workspace-mcp/read_file_tool`, edit, terminal (git branch) | Yes, after approval only |
+| **dv-code-reviewer** | Audits the written files against the standard and returns a verdict | `workspace-mcp/read_file_tool` | **No** (read-only by design) |
+| **dv-pr-generator** | Stages exactly the approved files, commits, pushes, opens the PR | terminal (`git`, `gh`), edit (PR body file) | Git + a temporary `pr_body.md` (git-ignored) |
+| **jira-ticket-agent** *(optional)* | Turns a Jira ticket into a ticket spec; posts comments; changes status | `jira-mcp/*` | No |
 
-- VS Code with GitHub Copilot (agent mode / custom agents)
-- [`uv`](https://docs.astral.sh/uv/) to run the MCP server (its Python dependencies are declared inline in `cortex_agent.py`)
-- Python ≥ 3.10
-- `dbt-core`, `dbt-snowflake` and the `dbt_constraints` package
-- GitHub CLI (`gh`), authenticated via `gh auth login`
-- Snowflake access to the `CUSTOM_AGENT` database
+**Why one MCP server per area?** Each file is small and has one job, so you can see at a glance what touches Snowflake, Jira, or git. A team without Jira simply doesn't start `jira-mcp`. Each server starts once when VS Code opens, so there is no extra cost per tool call.
 
-**Configuration**
+---
 
-1. Create a `.env` file in the repo root (never commit it):
+## 4. The flow
 
-   ```env
-   SNOWFLAKE_ACCOUNT=<account_identifier>
-   SNOWFLAKE_USER=<user>
-   SNOWFLAKE_PASSWORD=<password>
-   SNOWFLAKE_WAREHOUSE=COMPUTE_WH
-   SNOWFLAKE_DATABASE=CUSTOM_AGENT
-   SNOWFLAKE_SCHEMA=STAGING
-   ```
+The Coordinator is the hub. Every arrow goes to or from it, and sub-agents never call each other. Step numbers match the Coordinator's instructions in [Data_Vault_Pipeline_Coordinator.agent.md](.github/agents/Data_Vault_Pipeline_Coordinator.agent.md).
 
-2. Ensure the Snowflake objects exist: the raw source schema (e.g. `RAW_CORE_BANKING`), the control table `CONTROL.REF_SOURCE_SYSTEM`, and the target schemas `STAGING`, `RAW_VAULT` and `INFO_MART`.
-3. Create a `dv_gen_project` profile in `~/.dbt/profiles.yml`, then verify:
+```mermaid
+flowchart TD
+    U([User]) -->|inline spec or Jira ID| C[Coordinator]
 
+    C -.->|0. FETCH, only for a Jira ID| J[jira-ticket-agent<br/>optional]
+    J -.->|ticket spec| C
+
+    C -->|1. PROPOSAL MODE| G[dv-model-generator]
+    G -->|proposed files, validated| C
+    C -->|2. approve? yes/no| U
+    C -->|3. APPROVED EXECUTION MODE| G
+    G -->|files written| C
+
+    C -->|4. review| R[dv-code-reviewer<br/>read-only]
+    R -->|verdict| C
+    C -.->|REQUEST CHANGES: FIX MODE,<br/>then back to 2, max 3 rounds| G
+
+    C -->|5. dbt build| DBT[(dbt / Snowflake)]
+    C -->|6. open PR| P[dv-pr-generator]
+    P -->|PR URL| C
+    C -->|7. report| U
+```
+
+### Steps and handoffs
+
+| Step | Coordinator dispatches | What it passes | What must come back to continue | Otherwise |
+|---|---|---|---|---|
+| **0. Ticket input** | `jira-ticket-agent` FETCH *(only if you gave just a Jira ID)* | Ticket ID | `TICKET SPECIFICATION` with `MISSING: none` | Stop and ask you for the missing values |
+| **1. Proposal** | `dv-model-generator`, PROPOSAL MODE | Ticket spec | Proposed files, every SQL file `pass: true`. **Nothing written.** | Stop: table, `sources.yml` entry or `REF_SOURCE_SYSTEM` row missing; ticket REC_SRC/BKCC differs from `REF_SOURCE_SYSTEM`; ticket conflicts with the standard; or validation still failing after 3 fix attempts |
+| **2. Approval** | *you* | Proposed files | `yes` | `no` ends the run |
+| **3. Write files** | `dv-model-generator`, APPROVED EXECUTION MODE, `CORRECTED: false` | Exact approved proposal | Branch `<TICKET_ID>_DEV` created from fresh `main`, all files written | Stop: workspace not clean, branch already exists, file not created |
+| **4. Review** | `dv-code-reviewer` | All approved file paths, ticket requirements | `VERDICT: APPROVE` | `REQUEST CHANGES`: generator FIX MODE (full findings, spec, current files) → you approve again → write with `CORRECTED: true` on the same branch → review all files again. **Max 3 review rounds**, then stop with the remaining findings. |
+| **5. dbt build** | *(Coordinator runs it)* | `dbt build --select <all generated models>` | `DBT_EXIT=0` | Stop and show the dbt errors; you decide what to do next |
+| **6. PR** | `dv-pr-generator` | Files, ticket ID, your approval, reviewer verdict, dbt result | Real PR URL | Stop on any failed git or `gh` command (no auto-retry) |
+| **7. Report** | *you* | Branch, files, verdict, dbt result, PR URL | — | — |
+
+### Rules that keep it predictable
+
+- **The Coordinator owns the flow.** Sub-agents do one job and return to it. They never call each other.
+- **What you approve is exactly what gets written.** Any change after approval (for example a reviewer fix) needs a new approval.
+- **Every loop has a limit.** The validator gets at most 3 fix attempts per model, and review gets at most 3 rounds. Nothing can cycle forever.
+- **Any failure stops the run and is reported.** Agents never guess, retry blindly or skip a step.
+
+### If a run stops after files were written
+
+When a run ends after Step 3 (you said no, the review limit was reached, dbt failed, or git failed), the generated files stay on `<TICKET_ID>_DEV`. A new run for the same ticket stops at Step 3 because the branch exists and the workspace isn't clean. You have two options:
+
+- **Finish by hand:** fix the problem on `<TICKET_ID>_DEV` yourself and open the PR manually.
+- **Start over:** discard everything from that run. **This deletes the generated files.** The Coordinator never does this for you.
+
+  ```bash
+  git checkout -- .                             # undo edits to tracked files (e.g. sources.yml)
+  git clean -fd -- dv_gen_project/models        # delete the new, uncommitted model files
+  git checkout main
+  git branch -D <TICKET_ID>_DEV                 # delete the local branch
+  git push origin --delete <TICKET_ID>_DEV      # only if the branch was already pushed (failure at PR creation)
+  ```
+
+  Then run the ticket again.
+
+---
+
+## 5. How it connects to Snowflake
+
+```
+.env  ──►  mcp_servers/snowflake_mcp.py  ──►  sql_exec_tool  ──►  dv-model-generator
+                (snowflake-connector-python, password auth, one reused connection)
+
+~/.dbt/profiles.yml  ──►  dbt build  (run by the Coordinator from dv_gen_project/)
+```
+
+- **Credentials:** `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, plus optional `SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_DATABASE` / `SNOWFLAKE_SCHEMA` (defaults: `COMPUTE_WH` / `CUSTOM_AGENT` / `STAGING`). The connection opens on the first query and is reused.
+- **What the agent queries** (read-only lookups, scoped to the ticket's table):
+  - `INFORMATION_SCHEMA.COLUMNS`: the live column list of the source table.
+  - `CUSTOM_AGENT.CONTROL.REF_SOURCE_SYSTEM`: the governed `REC_SRC` / `BKCC` for that table. Agents never insert or edit rows here.
+- **Objects that must exist:** raw source schemas (e.g. `RAW_CORE_BANKING`, `RAW_CARD_PROCESSOR`), `CONTROL.REF_SOURCE_SYSTEM`, and the target schemas `STAGING`, `RAW_VAULT`, `INFO_MART`.
+- **dbt** uses its own profile named `dv_gen_project` in `~/.dbt/profiles.yml`. It routes staging models to views in `STAGING`, Hubs, Links and Satellites to incremental tables in `RAW_VAULT`, and marts to views in `INFO_MART`.
+- **Security:** `sql_exec_tool` can run any SQL. Give the agent's Snowflake user a least-privilege role, and prefer key-pair or SSO over a password for shared use.
+
+---
+
+## 6. How it connects to Jira (optional)
+
+Jira is a **separate, optional agent**. The pipeline works fully without it: paste the ticket spec inline instead.
+
+```
+.env (JIRA_*)  ──►  mcp_servers/jira_mcp.py  ──►  jira-ticket-agent  ──►  (Coordinator, Step 0)
+                     Jira Cloud REST API v2, basic auth with email + API token
+```
+
+**Enable it:**
+
+1. Create an API token at <https://id.atlassian.com/manage-profile/security/api-tokens>.
+2. Add to `.env`: `JIRA_DOMAIN=https://<your-company>.atlassian.net`, `JIRA_EMAIL=…`, `JIRA_API_TOKEN=…`.
+3. Start `jira-mcp` from the VS Code MCP panel.
+
+**What it can do:**
+
+| You say (to `jira-ticket-agent`, or to the Coordinator with just an ID) | Mode | Jira call |
+|---|---|---|
+| `Run pipeline for DLJ25-410` (Coordinator) | FETCH | Reads summary + description and extracts the ticket spec. Missing fields are listed, never guessed. |
+| `Add a comment to DLJ25-410: started working on this` | COMMENT | Posts the comment and returns its ID |
+| `Move DLJ25-410 to In Progress` | STATUS | Transitions the ticket; if not allowed, lists the valid statuses |
+
+**For the FETCH to work,** write the ticket description with the same fields as an inline spec: source table, Hub/Link name, BK, HK formula, grain columns, and Satellite columns if a Satellite is wanted. Anything missing is reported back and the run stops.
+
+---
+
+## 7. Setup
+
+**Prerequisites:** VS Code with GitHub Copilot (agent mode / custom agents) · [`uv`](https://docs.astral.sh/uv/) · Python ≥ 3.10 · `dbt-core` + `dbt-snowflake` · GitHub CLI `gh` (logged in with `gh auth login`) · Snowflake access.
+
+1. `cp .env.example .env` and fill in the Snowflake values (and the Jira ones if you want Jira).
+2. Create a `dv_gen_project` profile in `~/.dbt/profiles.yml`, then:
    ```bash
    cd dv_gen_project
    dbt deps
    dbt debug
    ```
+3. **Open this folder as the VS Code workspace root.** `.github/agents/` and `.vscode/mcp.json` are found relative to the opened folder. This matters when the project sits inside a monorepo: open this subfolder, not the monorepo root.
+4. In the MCP panel, start `snowflake-mcp`, `dv-validator-mcp`, `workspace-mcp` and, optionally, `jira-mcp`. Each server installs its own Python dependencies through `uv` on first run.
 
-4. Open the repo in VS Code. `.vscode/mcp.json` registers the `snowflake-mcp` server (`uv run ./cortex_agent.py`). Start it from the MCP panel if it isn't already running.
+**Quick check that a server works:**
 
----
-
-## 12. Usage example
-
-In Copilot Chat, select the **`Data_Vault_Pipeline_Coordinator`** agent and submit a ticket:
-
-```text
-Ticket: DV-101
-Source table: CORE_BANKING.BRANCHES
-Staging model name: stg_sap_ecc_branches
-Hub: hub_branch   (BK: BRANCH_CODE, HK = hash of BRANCH_CODE + BKCC)
-Satellite: sat_branch_details   (columns: BRANCH_NAME, CITY)
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | uv run mcp_servers/dv_validator_mcp.py
 ```
 
-What you will see:
+---
 
-1. A branch `DV-101_DEV` created from an up-to-date `main`.
-2. Generated and validated files, presented for your approval.
-3. A reviewer verdict, with automatic fix loops if changes are requested.
-4. `dbt snapshot` and `dbt build` results.
-5. A PR plan for your approval, then the PR URL.
+## 8. Guardrails
+
+| Guardrail | How |
+|---|---|
+| Nothing written without consent | The generator writes only in APPROVED EXECUTION MODE, after your "yes" |
+| Independent review | The reviewer has only a read tool |
+| Human approval | Before files are written, and again before every reviewer-driven change is written |
+| Grounded in reality | Live schema fetch is mandatory; missing table, source or metadata stops the run |
+| No invented metadata | `REC_SRC` / `BKCC` always come from `REF_SOURCE_SYSTEM` (ticket values are only cross-checked); agents never write to it |
+| Deterministic checks first | `validate_model_tool` must pass before you see any SQL |
+| Fail-stop | Failed dbt, git or `gh` commands halt the run; no automatic retries |
+| No endless loops | Max 3 validator fix attempts per model, max 3 review rounds |
+| Single orchestrator | Only the Coordinator dispatches agents; sub-agents always return to it |
+| Safe git | Ticket branch `<TICKET_ID>_DEV`, never push to `main`, stage only the approved files (never `git add -A`) |
+| Secrets stay local | `.env` is git-ignored; `.env.example` holds only key names |
 
 ---
 
-## 13. Status and limitations
+## 9. Reusing this pattern for other work
+
+The structure is generic. Only the domain content is Data Vault specific.
+
+| Keep as-is | Replace for your use case |
+|---|---|
+| Coordinator / generator / reviewer / PR roles and the handoff table above | `DV_STANDARD.MD` → your team's standard and templates |
+| Proposal → approve → write → review → build → PR sequence | `dv_validator_mcp.py` → your deterministic checks |
+| Human gates, fail-stop rules, safe git | The reviewer's checklist |
+| `mcp_base.py`, `workspace_mcp.py`, `jira_mcp.py` | `snowflake_mcp.py` → your database or API |
+| Optional Jira agent for ticket intake | `dbt build` → your build or test command |
+
+**Examples:** dbt staging or mart scaffolding, test generation, Terraform or IaC changes, API endpoint scaffolding, documentation updates.
+
+**What this gives the team:**
+- Faster ticket-to-PR delivery.
+- The same output whoever runs it.
+- Standards enforced on every run instead of living in people's heads.
+- Defects caught at four layers: validator → reviewer → dbt → human.
+- Review time spent on business logic, not formatting.
+
+---
+
+## 10. Status and known items
 
 | Component | Status |
 |---|---|
-| Four-agent pipeline (coordinator, generator, reviewer, PR agent) | Implemented |
-| MCP tool layer (SQL, validation, git/PR) | Implemented |
-| Standards-grounded generation with approval gates | Implemented |
-| Data Vault use case: staging, Hub, Satellite and tests (`BRANCHES` example) | Implemented |
-| Link generation and mart models | Supported by the standard or config; no examples generated yet |
+| Coordinator, generator, reviewer, PR agent | Implemented |
+| Optional Jira agent (fetch / comment / status) | Implemented |
+| MCP servers (Snowflake, validator, workspace, Jira) | Implemented |
+| Staging, Hub, Satellite generation with tests | Implemented and used on demo tickets |
+| Link and mart generation | Supported by the standard and dbt config; not exercised yet |
 
-**Known items to tighten**
+**Known items:**
 
-- The standard refers to `ref_business_key_collision`, while the implemented models use `CONTROL.REF_SOURCE_SYSTEM`. The documentation should be aligned.
-- The validator checks for single `rename as` / `filter as` CTEs, while the standard's multi-stream layout uses suffixed names (`RENAME_S`, `FILTER_A`). The validator should be updated to accept both.
-- The `execute_git_pr` tool uses `git add -A`, which conflicts with the PR agent's rule of staging only approved files. Prefer the agent's explicit per-file sequence, or update the tool to take a file list.
-- `sql_exec_tool` can run any SQL. Use a least-privilege Snowflake role for the agent's user.
-- Password authentication via `.env` suits local development. Use key-pair or SSO authentication for shared use.
-
-**Roadmap ideas:** CI that runs the validator and `dbt build` on every PR, more use cases on the same agent skeleton, and metrics on cycle time and review findings to measure the automation's impact.
+- The standard refers to `ref_business_key_collision`; the implementation uses `CONTROL.REF_SOURCE_SYSTEM`. These should be aligned.
+- Roadmap ideas:
+  - CI that runs the validator and `dbt build` on every PR.
+  - A Jira comment with the PR URL when a run finishes.
+  - Metrics on cycle time and on review findings.

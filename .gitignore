@@ -17,6 +17,7 @@ dv_gen_project/.user.yml
 # OS/editor noise
 .DS_Store
 Thumbs.db
+pr_body.md
 pr_body_*.md
 
 logs/

@@ -125,16 +125,12 @@ project.
 
 4. **FILTER Layer:** Drop invalid or null grain rows.
 
-   For the `_A` stream, filter using the `REC_SRC` value resolved for the
-   current workflow.
+   For the `_A` stream (`REF_SOURCE_SYSTEM`), filter on the driver
+   table's `TABLE_SCHEMA` and `TABLE_NAME`, so exactly one row is joined.
 
-   - If `REC_SRC` is explicitly provided in the current ticket/request, use
-     that exact value.
-   - If `REC_SRC` is not provided, resolve it from the authoritative
-     Business Key Collision/control metadata.
    - Never hardcode or reuse a `REC_SRC` value from a previous model, ticket,
      or remembered source-system mapping.
-   - If `REC_SRC` cannot be resolved unambiguously, STOP and report the
+   - If the row cannot be resolved unambiguously, STOP and report the
      missing or ambiguous metadata.
 
 5. **JOIN Layer:** Consolidate the streams into a single `JOIN_RESULT` CTE.
@@ -161,22 +157,19 @@ Examples:
 - `RAW_CARD_PROCESSOR.CARDS` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_CARDS`
 - `RAW_CARD_PROCESSOR.CUSTOMERS` → `BKCC = SAP_ECC`, `REC_SRC = SAP_ECC_CUSTOMERS`
 
-The resolution priority is:
+The resolution rules are:
 
-1. Explicit `REC_SRC` or `BKCC` values provided in the current
-   ticket/request take priority.
-2. If not explicitly provided, resolve the values from the current
-   `REF_SOURCE_SYSTEM` metadata.
-3. The metadata lookup must use both `TABLE_SCHEMA` and `TABLE_NAME`
-   to uniquely identify the source table.
-4. If the required values cannot be resolved unambiguously, STOP.
+1. `REC_SRC` and `BKCC` always come from `REF_SOURCE_SYSTEM`, joined in
+   the staging model. They are never hardcoded as string literals.
+2. The lookup must use both `TABLE_SCHEMA` and `TABLE_NAME` to uniquely
+   identify the source table.
+3. If the values cannot be resolved unambiguously, STOP.
+4. If a ticket also states `REC_SRC` or `BKCC`, it is a cross-check only.
+   If it differs from `REF_SOURCE_SYSTEM`, STOP: the control table must
+   be corrected by its owners before generation.
 
 The generator must not derive `REC_SRC` or `BKCC` from the dbt
-`source()` name, model name, or Snowflake schema name when authoritative
-values are available in `REF_SOURCE_SYSTEM`.
-
-Explicit ticket/request values always take priority over
-metadata-derived values.
+`source()` name, model name, or Snowflake schema name.
 
 ## dbt Source Registration Governance
 
@@ -216,21 +209,16 @@ Examples:
 
 ### REC_SRC
 
-- If `REC_SRC` is explicitly provided in the current ticket/request, the
-  generator MUST use that exact value.
-- If `REC_SRC` is not provided, the generator MUST resolve it from the
-  authoritative current control/Business Key Collision metadata.
-- The resolved `REC_SRC` value MUST be used consistently in the `_A` stream
-  filter and downstream join logic.
-- The generator MUST NOT derive `REC_SRC` from `BKCC` unless the current
-  request explicitly defines that relationship.
+- `REC_SRC` MUST come from the `REF_SOURCE_SYSTEM` join in staging.
+- A `REC_SRC` stated in the ticket is a cross-check only; if it differs
+  from `REF_SOURCE_SYSTEM`, STOP (see REC_SRC and BKCC Governance).
+- The generator MUST NOT derive `REC_SRC` from `BKCC`.
 
 ### BKCC
 
-- If `BKCC` is explicitly provided in the current ticket/request, the
-  generator MUST use that exact value.
-- If `BKCC` is not provided, the generator MUST resolve it from the
-  authoritative current control/Business Key Collision metadata.
+- `BKCC` MUST come from the `REF_SOURCE_SYSTEM` join in staging.
+- A `BKCC` stated in the ticket is a cross-check only; if it differs
+  from `REF_SOURCE_SYSTEM`, STOP.
 - The generator MUST NOT assume a default such as `SAP_ECC`.
 - The generator MUST NOT reuse a BKCC value from a previous model or ticket.
 
@@ -310,13 +298,13 @@ Never `SELECT DISTINCT` anywhere in staging or raw vault. Always `QUALIFY ROW_NU
 
 ## Business Key Collision Governance
 
-For the `FILTER_A` stream, filter using the REC_SRC value resolved for the
-current source table.
+The `FILTER_A` stream filters the control metadata on the driver table's
+`TABLE_SCHEMA` and `TABLE_NAME`. `REC_SRC` and `BKCC` are then selected
+from that joined row only; ticket values are a cross-check (see REC_SRC
+and BKCC Governance).
 
-The value MUST come from either the explicit ticket/request or the
-authoritative control/reference metadata.
-
-Do not use a hardcoded REC_SRC value from a previous model or ticket.
+Do not use a hardcoded REC_SRC value from the ticket, a previous model,
+or a previous ticket.
 
 The generator MUST use the current project configuration and authoritative
 Snowflake metadata to determine the correct source.
@@ -368,14 +356,16 @@ RENAME_S AS (
     SELECT <ENTITY>_BK, <other_columns>, LOAD_DTS FROM LOGIC_S
 ),
 RENAME_A AS (
-    SELECT TABLE_NAME, REC_SRC, BKCC FROM LOGIC_A
+    SELECT TABLE_SCHEMA, TABLE_NAME, REC_SRC, BKCC FROM LOGIC_A
 ),
 
 FILTER_S AS (
     SELECT * FROM RENAME_S WHERE <ENTITY>_BK IS NOT NULL
 ),
 FILTER_A AS (
-    SELECT * FROM RENAME_A WHERE TABLE_NAME = '<DRIVER_TABLE>'
+    SELECT * FROM RENAME_A
+    WHERE TABLE_SCHEMA = '<PHYSICAL_SCHEMA>'
+      AND TABLE_NAME = '<DRIVER_TABLE>'
 ),
 
 JOIN_RESULT AS (
@@ -545,7 +535,7 @@ models:
 ```
 ## Ticket-Driven Workflow
 
-When given a Jira-style ticket specifying source table, HK/BK formula, grain columns, and Satellite columns:
+When given a ticket specifying source table, HK/BK formula, grain columns, and Satellite columns:
 
 1. A dedicated branch is created, named `<TICKET_ID>_DEV`.
 2. Models are generated directly from this standard's templates above - no existing reference file in the project is required.

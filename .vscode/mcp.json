@@ -2,10 +2,19 @@
   "servers": {
     "snowflake-mcp": {
       "command": "uv",
-      "args": [
-        "run",
-        "./cortex_agent.py"
-      ]
+      "args": ["run", "${workspaceFolder}/mcp_servers/snowflake_mcp.py"]
+    },
+    "dv-validator-mcp": {
+      "command": "uv",
+      "args": ["run", "${workspaceFolder}/mcp_servers/dv_validator_mcp.py"]
+    },
+    "workspace-mcp": {
+      "command": "uv",
+      "args": ["run", "${workspaceFolder}/mcp_servers/workspace_mcp.py"]
+    },
+    "jira-mcp": {
+      "command": "uv",
+      "args": ["run", "${workspaceFolder}/mcp_servers/jira_mcp.py"]
     }
   }
 }
